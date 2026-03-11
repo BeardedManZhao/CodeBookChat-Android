@@ -1,0 +1,9 @@
+<resources>
+    <!-- Base application theme. -->
+    <style name="Base.Theme.SoulQuestionApp" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Customize your light theme here. 这里是 通知栏颜色-->
+        <item name="colorPrimary">@color/none</item>
+    </style>
+
+    <style name="Theme.SoulQuestionApp" parent="Base.Theme.SoulQuestionApp"/>
+</resources>
