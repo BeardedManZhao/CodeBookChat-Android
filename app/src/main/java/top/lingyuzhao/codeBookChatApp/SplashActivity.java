@@ -12,8 +12,10 @@ import android.view.View;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.splashscreen.SplashScreen;
+
 import com.bumptech.glide.Glide;
 
 import java.io.BufferedReader;
@@ -22,7 +24,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 
 public class SplashActivity extends AppCompatActivity {
-    private String currentVersion;
+    private String currentVersion, latestVersion;
 
     private String getAppVersion() {
         try {
@@ -65,9 +67,9 @@ public class SplashActivity extends AppCompatActivity {
                 connection.setRequestMethod("GET");
                 connection.connect();
 
-                BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
-                String latestVersion = reader.readLine();
-                StringBuilder updateContent = new StringBuilder();
+                final BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+                latestVersion = reader.readLine();
+                final StringBuilder updateContent = new StringBuilder();
                 String line;
                 while ((line = reader.readLine()) != null) {
                     updateContent.append(line).append("\n");
@@ -92,7 +94,7 @@ public class SplashActivity extends AppCompatActivity {
                 .setMessage(content)
                 .setPositiveButton("下载", (dialog, which) -> {
                     Intent browserIntent = new Intent(Intent.ACTION_VIEW,
-                            Uri.parse(AppConstants.BASE_URL + "/app/download"));
+                            Uri.parse(AppConstants.BASE_URL + "/app/download?v=" + latestVersion));
                     finish();
                     startActivity(browserIntent);
                 })
@@ -105,6 +107,6 @@ public class SplashActivity extends AppCompatActivity {
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             startActivity(new Intent(SplashActivity.this, MainActivity.class));
             finish();
-        }, 3000);
+        }, 2000);
     }
 }

@@ -11,7 +11,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 3
-        versionName = "1.8"
+        versionName = "1.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -71,7 +71,7 @@ dependencies {
 
     implementation("com.github.bumptech.glide:glide:4.16.0")
 
-    implementation("io.github.BeardedManZhao:zhao-utils:1.2.20250607")
+    implementation("io.github.beardedmanzhao:zhao-utils:1.2.20260315")
 
     testImplementation("junit:junit:4.13.2")
 

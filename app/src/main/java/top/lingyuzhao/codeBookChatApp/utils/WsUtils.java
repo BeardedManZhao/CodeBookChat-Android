@@ -2,22 +2,26 @@ package top.lingyuzhao.codeBookChatApp.utils;
 
 import android.content.Context;
 import android.util.Log;
-import okhttp3.*;
+
+import java.net.URISyntaxException;
+import java.util.Date;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.WebSocket;
+import okhttp3.WebSocketListener;
 import top.lingyuzhao.codeBookChatApp.AppConstants;
 import top.lingyuzhao.codeBookChatApp.KeepAliveForegroundService;
 import top.lingyuzhao.codeBookChatApp.push.PushNotifyTool;
 import top.lingyuzhao.utils.StrUtils;
 
-import java.net.URISyntaxException;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-
 public class WsUtils {
 
-    private static final String TAG         = "WsUtils";
-    private static final String DOMAIN      = AppConstants.WSS_BASE;
+    private static final String TAG = "WsUtils";
+    private static final String DOMAIN = AppConstants.WSS_BASE;
     private static final String DOMAIN_HTTP = AppConstants.CHAT_PAGE_URL;
 
     // ✅ 全局单例 OkHttpClient，线程池复用，无 pingInterval（服务端未实现 Pong）

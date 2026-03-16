@@ -14,43 +14,46 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
-import android.os.*;
+import android.os.Build;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.IBinder;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Log;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
+
+import java.net.URISyntaxException;
+
 import okhttp3.WebSocket;
 import top.lingyuzhao.codeBookChatApp.push.PushNotifyTool;
 import top.lingyuzhao.codeBookChatApp.utils.WsUtils;
 
-import java.net.URISyntaxException;
-
 public class KeepAliveForegroundService extends Service {
 
-    public static final String EXTRA_WS_TOKEN        = "extra_ws_token";
+    public static final String EXTRA_WS_TOKEN = "extra_ws_token";
     public static final String EXTRA_NOTIFICATION_TEXT = "extra_notification_text";
-    public static final String CHANNEL_ID            = "keep_alive_channel";
+    public static final String CHANNEL_ID = "keep_alive_channel";
 
-    private static final String TAG               = "KeepAliveSvc";
-    private static final int    NOTIFICATION_ID   = 0x1;
-    private static final long   HEARTBEAT_INTERVAL  = 25_000L;  // 25秒
-    private static final long   RECONNECT_BASE      = 3_000L;   // 首次重连等待
-    private static final long   RECONNECT_MAX       = 60_000L;  // 最长退避
-    private static final int    WAKELOCK_TIMEOUT    = 10 * 60 * 1000; // 10分钟
-
+    private static final String TAG = "KeepAliveSvc";
+    private static final int NOTIFICATION_ID = 0x1;
+    private static final long HEARTBEAT_INTERVAL = 25_000L;  // 25秒
+    private static final long RECONNECT_BASE = 3_000L;   // 首次重连等待
+    private static final long RECONNECT_MAX = 60_000L;  // 最长退避
+    private static final int WAKELOCK_TIMEOUT = 10 * 60 * 1000; // 10分钟
+    private static boolean isDestroyed = false;
     // 对外暴露，供 WsUtils 回调写入
     public WebSocket webSocketClient = null;
-    public String    wsId            = TAG;
-
+    public String wsId = TAG;
     private HandlerThread handlerThread;
-    private Handler       wsHandler;
+    private Handler wsHandler;
     private PowerManager.WakeLock wakeLock;
-
     // ✅ 只存 userId，token 仅首次使用，重连不再需要
-    private long    currentUserId  = 0;
-    private long    reconnectDelay = RECONNECT_BASE;
-    private static boolean isDestroyed    = false;
-
+    private long currentUserId = 0;
+    private long reconnectDelay = RECONNECT_BASE;
     private ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;
     private boolean isAllowReConnect = false;
@@ -61,12 +64,21 @@ public class KeepAliveForegroundService extends Service {
     //  生命周期
     // ------------------------------------------------------------------ //
 
+    public KeepAliveForegroundService() {
+
+    }
+
     public static boolean isDestroyed() {
         return isDestroyed;
     }
 
-    public KeepAliveForegroundService() {
-
+    /**
+     * 任意位置调用，更新常驻通知文字
+     */
+    public static void requestUpdateNotificationText(Context context, String text) {
+        Intent intent = new Intent("ACTION_UPDATE_NOTIFICATION").setPackage(AppConstants.PACKAGE_NAME);
+        intent.putExtra(EXTRA_NOTIFICATION_TEXT, text);
+        context.sendBroadcast(intent);
     }
 
     @RequiresApi(api = Build.VERSION_CODES.TIRAMISU)
@@ -117,8 +129,8 @@ public class KeepAliveForegroundService extends Service {
             }
 
             // ✅ 只在首次收到 token 时用 token 连接，之后重连不走这里
-            String token  = intent.getStringExtra(EXTRA_WS_TOKEN);
-            long   userId = intent.getLongExtra("userId", 0);
+            String token = intent.getStringExtra(EXTRA_WS_TOKEN);
+            long userId = intent.getLongExtra("userId", 0);
             Log.i("KeepAliveForegroundService.onStartCommand", "为用户【" + userId + "】的全功能通道做准备！" + ";token=" + token);
             if (token != null && !token.isEmpty() && userId != 0) {
                 currentUserId = userId;
@@ -158,16 +170,18 @@ public class KeepAliveForegroundService extends Service {
         releaseWakeLock();
     }
 
+    // ------------------------------------------------------------------ //
+    //  连接逻辑
+    // ------------------------------------------------------------------ //
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;
     }
 
-    // ------------------------------------------------------------------ //
-    //  连接逻辑
-    // ------------------------------------------------------------------ //
-
-    /** 首次连接：使用 token，建立全功能频道 */
+    /**
+     * 首次连接：使用 token，建立全功能频道
+     */
     private void doConnectWithToken(String token, long userId) {
         closeWebSocket("new_token_connect");
         try {
@@ -181,7 +195,9 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
-    /** ✅ 断线重连：永远走无 token 的同步频道，不依赖过期 token */
+    /**
+     * ✅ 断线重连：永远走无 token 的同步频道，不依赖过期 token
+     */
     private void doConnectSync() {
         if (currentUserId == 0) {
             Log.w(TAG, "userId=0，跳过重连");
@@ -199,13 +215,19 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
-    /** 外部（WsUtils 回调）调用：通知 Service 连接已断，触发重连 */
+    /**
+     * 外部（WsUtils 回调）调用：通知 Service 连接已断，触发重连
+     */
     public void onWebSocketDisconnected(String reason) {
         Log.w(TAG, "WS 断开: " + reason + "，" + reconnectDelay + "ms 后重连");
         wsHandler.removeCallbacksAndMessages("heartbeat");
         webSocketClient = null;
         scheduleReconnect();
     }
+
+    // ------------------------------------------------------------------ //
+    //  心跳（文本 "0"，无需服务端改动）
+    // ------------------------------------------------------------------ //
 
     private void scheduleReconnect() {
         if (isDestroyed) return;
@@ -218,31 +240,11 @@ public class KeepAliveForegroundService extends Service {
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
     }
 
-    // ------------------------------------------------------------------ //
-    //  心跳（文本 "0"，无需服务端改动）
-    // ------------------------------------------------------------------ //
-
     private void scheduleHeartbeat() {
         wsHandler.removeCallbacksAndMessages("heartbeat");
         wsHandler.postAtTime(heartbeatTask, "heartbeat",
                 SystemClock.uptimeMillis() + HEARTBEAT_INTERVAL);
     }
-
-    private final Runnable heartbeatTask = () -> {
-        if (isDestroyed) return;
-        if (webSocketClient != null && webSocketClient.send("0")) {
-            Log.d(wsId, "心跳 ✓");
-            acquireWakeLock(); // 刷新 WakeLock 超时
-            scheduleHeartbeat();
-        } else {
-            Log.w(wsId, "心跳失败，触发重连");
-            onWebSocketDisconnected("heartbeat_failed");
-        }
-    };
-
-    // ------------------------------------------------------------------ //
-    //  网络变化监听：恢复联网后立即重连
-    // ------------------------------------------------------------------ //
 
     private void registerNetworkCallback() {
         connectivityManager = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
@@ -264,6 +266,7 @@ public class KeepAliveForegroundService extends Service {
                     }, "connect", SystemClock.uptimeMillis() + 500);
                 }
             }
+
             @Override
             public void onLost(@NonNull Network network) {
                 Log.w(TAG, "网络断开，暂停心跳");
@@ -279,12 +282,36 @@ public class KeepAliveForegroundService extends Service {
         } catch (Throwable t) {
             Log.w(TAG, "NetworkCallback 注册失败", t);
         }
-    }
+    }    private final Runnable heartbeatTask = () -> {
+        if (isDestroyed) return;
+        if (webSocketClient != null && webSocketClient.send("0")) {
+            Log.d(wsId, "心跳 ✓");
+            acquireWakeLock(); // 刷新 WakeLock 超时
+            scheduleHeartbeat();
+        } else {
+            Log.w(wsId, "心跳失败，触发重连");
+            onWebSocketDisconnected("heartbeat_failed");
+        }
+    };
+
+    // ------------------------------------------------------------------ //
+    //  网络变化监听：恢复联网后立即重连
+    // ------------------------------------------------------------------ //
 
     private void unregisterNetworkCallback() {
         if (connectivityManager != null && networkCallback != null) {
-            try { connectivityManager.unregisterNetworkCallback(networkCallback); }
-            catch (Throwable ignored) {}
+            try {
+                connectivityManager.unregisterNetworkCallback(networkCallback);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private void acquireWakeLock() {
+        try {
+            if (!wakeLock.isHeld()) wakeLock.acquire(WAKELOCK_TIMEOUT);
+        } catch (Throwable t) {
+            Log.w(TAG, "WakeLock acquire 失败", t);
         }
     }
 
@@ -292,28 +319,26 @@ public class KeepAliveForegroundService extends Service {
     //  WakeLock
     // ------------------------------------------------------------------ //
 
-    private void acquireWakeLock() {
-        try {
-            if (!wakeLock.isHeld()) wakeLock.acquire(WAKELOCK_TIMEOUT);
-        } catch (Throwable t) { Log.w(TAG, "WakeLock acquire 失败", t); }
-    }
-
     private void releaseWakeLock() {
         try {
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void closeWebSocket(String reason) {
+        if (webSocketClient != null) {
+            try {
+                webSocketClient.close(1000, reason);
+            } catch (Throwable ignored) {
+            }
+            webSocketClient = null;
+        }
     }
 
     // ------------------------------------------------------------------ //
     //  工具方法
     // ------------------------------------------------------------------ //
-
-    private void closeWebSocket(String reason) {
-        if (webSocketClient != null) {
-            try { webSocketClient.close(1000, reason); } catch (Throwable ignored) {}
-            webSocketClient = null;
-        }
-    }
 
     private void startForegroundCompat() {
         if (Build.VERSION.SDK_INT >= 34) {
@@ -356,10 +381,7 @@ public class KeepAliveForegroundService extends Service {
         if (nm != null) nm.notify(NOTIFICATION_ID, buildNotification().build());
     }
 
-    /** 任意位置调用，更新常驻通知文字 */
-    public static void requestUpdateNotificationText(Context context, String text) {
-        Intent intent = new Intent("ACTION_UPDATE_NOTIFICATION").setPackage(AppConstants.PACKAGE_NAME);
-        intent.putExtra(EXTRA_NOTIFICATION_TEXT, text);
-        context.sendBroadcast(intent);
-    }
+
+
+
 }

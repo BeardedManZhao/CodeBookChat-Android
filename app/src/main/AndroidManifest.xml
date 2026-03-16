@@ -28,7 +28,9 @@
         </activity>
         <activity
                 android:name=".MainActivity"
-                android:windowSoftInputMode="adjustResize|stateHidden"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
+            android:windowSoftInputMode="adjustResize|stateHidden"
+                android:hardwareAccelerated="true"
                 android:exported="true" />
         <service
                 android:name=".KeepAliveForegroundService"

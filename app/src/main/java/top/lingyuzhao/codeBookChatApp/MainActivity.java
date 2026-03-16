@@ -3,12 +3,23 @@ package top.lingyuzhao.codeBookChatApp;
 import android.annotation.SuppressLint;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
-import android.webkit.*;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
@@ -16,15 +27,24 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.work.*;
-import top.lingyuzhao.codeBookChatApp.push.PushNotifyTool;
+import androidx.work.Constraints;
+import androidx.work.ExistingPeriodicWorkPolicy;
+import androidx.work.NetworkType;
+import androidx.work.PeriodicWorkRequest;
+import androidx.work.WorkManager;
+
 import java.util.concurrent.TimeUnit;
+
+import top.lingyuzhao.codeBookChatApp.push.PushNotifyTool;
 
 public class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<Intent> fileChooserLauncher;
     private ValueCallback<Uri[]> mFilePathCallback;
     private WebView webView;
     private ActivityResultLauncher<String> postNotificationsPermissionLauncher;
+    private FrameLayout fullscreenContainer; // 用于承载全屏视频的容器
+    private WebChromeClient.CustomViewCallback customViewCallback;
+    private long firstBackTime = 0;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -57,10 +77,17 @@ public class MainActivity extends AppCompatActivity {
                 });
 
         webView = findViewById(R.id.webview);
+        // ⚠️ 必须在 setWebChromeClient 之前初始化，否则回调触发时为 null
+        fullscreenContainer = new FrameLayout(this);
         // --- 新的返回键处理逻辑 ---
         OnBackPressedCallback callback = new OnBackPressedCallback(true /* enabled by default */) {
             @Override
             public void handleOnBackPressed() {
+                // 如果现在是全屏就先退出全屏
+                if (customViewCallback != null) {
+                    exitFullscreen();
+                    return;
+                }
                 // 在这里实现您原有的逻辑
                 if (webView.canGoBack()) {
                     webView.goBack();
@@ -93,6 +120,9 @@ public class MainActivity extends AppCompatActivity {
         setupWebBridge(webView);
         handleNotificationOpenIntent(getIntent());
 
+        // ✅ 修复3：补充 DownloadListener，捕获 Content-Disposition 触发的下载（视频等）
+        webView.setDownloadListener(new WebViewDownloadListener(this));
+        // 设置 web 客户端 并实现其中的处理方案
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -130,6 +160,35 @@ public class MainActivity extends AppCompatActivity {
                 }
                 return true;
             }
+
+            @Override
+            public void onShowCustomView(View view, CustomViewCallback callback) {
+                if (customViewCallback != null) {
+                    onHideCustomView();
+                    return;
+                }
+
+                customViewCallback = callback;
+                webView.setVisibility(View.GONE);
+
+                ViewGroup decorView = (ViewGroup) getWindow().getDecorView();
+                fullscreenContainer.addView(view, new ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+                decorView.addView(fullscreenContainer, new ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+
+                // ✅ 跟随传感器，横竖由用户决定
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            }
+
+            @Override
+            public void onHideCustomView() {
+                // ✅ 修复1：只调用 exitFullscreen()，不再重复移除，避免 NPE
+                exitFullscreen();
+            }
         });
         setupKeyboardInsetListener();
         final WebSettings settings = webView.getSettings();
@@ -137,7 +196,29 @@ public class MainActivity extends AppCompatActivity {
         settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
+
         webView.loadUrl(AppConstants.CHAT_PAGE_URL);
+    }
+
+    /**
+     * 封装退出全屏的逻辑（唯一出口，避免重复移除导致 NPE）
+     */
+    private void exitFullscreen() {
+        if (customViewCallback != null) {
+            customViewCallback.onCustomViewHidden();
+            customViewCallback = null;
+        }
+
+        fullscreenContainer.removeAllViews();
+        if (fullscreenContainer.getParent() != null) {
+            ((ViewGroup) fullscreenContainer.getParent()).removeView(fullscreenContainer);
+        }
+
+        webView.setVisibility(View.VISIBLE);
+
+        // ✅ 退出后恢复跟随传感器（或改为 UNSPECIFIED 恢复系统默认）
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
     }
 
     @Override
@@ -240,8 +321,6 @@ public class MainActivity extends AppCompatActivity {
             webView.setLayoutParams(params);
         }
     }
-
-    private long firstBackTime = 0;
 
     public static final class WebAppBridge {
         private final android.content.Context appContext;

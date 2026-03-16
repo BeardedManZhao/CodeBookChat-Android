@@ -10,21 +10,24 @@ import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Build;
+
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
+
 import org.json.JSONObject;
-import top.lingyuzhao.codeBookChatApp.AppConstants;
-import top.lingyuzhao.codeBookChatApp.MainActivity;
-import top.lingyuzhao.codeBookChatApp.R;
-import top.lingyuzhao.codeBookChatApp.utils.HtmlTextExtractor;
-import top.lingyuzhao.utils.CacheUtils;
 
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+
+import top.lingyuzhao.codeBookChatApp.AppConstants;
+import top.lingyuzhao.codeBookChatApp.MainActivity;
+import top.lingyuzhao.codeBookChatApp.R;
+import top.lingyuzhao.codeBookChatApp.utils.HtmlTextExtractor;
+import top.lingyuzhao.utils.CacheUtils;
 
 public final class PushNotifyTool {
     public static final String CHANNEL_ID_CHAT = "chat_message";
@@ -219,7 +222,7 @@ public final class PushNotifyTool {
         long ts;
 
         public ParsedMessage(long sendId, long recId, String body, String title, long ts, int command, boolean last,
-                              String openUrl, String rawJson, int notificationId, @Nullable String avatarUrl, JSONObject lastMessage) {
+                             String openUrl, String rawJson, int notificationId, @Nullable String avatarUrl, JSONObject lastMessage) {
             this.sendId = sendId;
             this.recId = recId;
             this.body = body;
