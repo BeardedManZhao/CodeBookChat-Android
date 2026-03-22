@@ -282,6 +282,15 @@ public class KeepAliveForegroundService extends Service {
         } catch (Throwable t) {
             Log.w(TAG, "NetworkCallback 注册失败", t);
         }
+    }
+
+    private void unregisterNetworkCallback() {
+        if (connectivityManager != null && networkCallback != null) {
+            try {
+                connectivityManager.unregisterNetworkCallback(networkCallback);
+            } catch (Throwable ignored) {
+            }
+        }
     }    private final Runnable heartbeatTask = () -> {
         if (isDestroyed) return;
         if (webSocketClient != null && webSocketClient.send("0")) {
@@ -298,15 +307,6 @@ public class KeepAliveForegroundService extends Service {
     //  网络变化监听：恢复联网后立即重连
     // ------------------------------------------------------------------ //
 
-    private void unregisterNetworkCallback() {
-        if (connectivityManager != null && networkCallback != null) {
-            try {
-                connectivityManager.unregisterNetworkCallback(networkCallback);
-            } catch (Throwable ignored) {
-            }
-        }
-    }
-
     private void acquireWakeLock() {
         try {
             if (!wakeLock.isHeld()) wakeLock.acquire(WAKELOCK_TIMEOUT);
@@ -315,16 +315,16 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
-    // ------------------------------------------------------------------ //
-    //  WakeLock
-    // ------------------------------------------------------------------ //
-
     private void releaseWakeLock() {
         try {
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         } catch (Throwable ignored) {
         }
     }
+
+    // ------------------------------------------------------------------ //
+    //  WakeLock
+    // ------------------------------------------------------------------ //
 
     private void closeWebSocket(String reason) {
         if (webSocketClient != null) {
@@ -336,10 +336,6 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
-    // ------------------------------------------------------------------ //
-    //  工具方法
-    // ------------------------------------------------------------------ //
-
     private void startForegroundCompat() {
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, buildNotification().build(),
@@ -348,6 +344,10 @@ public class KeepAliveForegroundService extends Service {
             startForeground(NOTIFICATION_ID, buildNotification().build());
         }
     }
+
+    // ------------------------------------------------------------------ //
+    //  工具方法
+    // ------------------------------------------------------------------ //
 
     private void ensureChannel() {
         NotificationManager nm = getSystemService(NotificationManager.class);

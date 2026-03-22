@@ -45,6 +45,7 @@ public class MainActivity extends AppCompatActivity {
     private FrameLayout fullscreenContainer; // 用于承载全屏视频的容器
     private WebChromeClient.CustomViewCallback customViewCallback;
     private long firstBackTime = 0;
+    private String pendingUid;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -118,12 +119,24 @@ public class MainActivity extends AppCompatActivity {
         setupNotificationPermissionIfNeeded();
         scheduleWakeWhenOnlineWork();
         setupWebBridge(webView);
-        handleNotificationOpenIntent(getIntent());
 
         // ✅ 修复3：补充 DownloadListener，捕获 Content-Disposition 触发的下载（视频等）
         webView.setDownloadListener(new WebViewDownloadListener(this));
         // 设置 web 客户端 并实现其中的处理方案
         webView.setWebViewClient(new WebViewClient() {
+
+            // ✅ 新增这个
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+
+                // 页面加载完成后再执行 JS
+                if (pendingUid != null) {
+                    tryOpenChatByJs(pendingUid);
+                    pendingUid = null;
+                }
+            }
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
@@ -196,8 +209,38 @@ public class MainActivity extends AppCompatActivity {
         settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
+        // 检查看看有没有携带 openUrl
+        final Intent intent = getIntent();
+        final Uri uri = intent.getData();
+        if (handleNotificationOpenIntent(intent) && uri != null) {
+            webView.loadUrl(uri.toString());
+        } else {
+            webView.loadUrl(AppConstants.CHAT_PAGE_URL);
+        }
+    }
 
-        webView.loadUrl(AppConstants.CHAT_PAGE_URL);
+    /**
+     * 尝试打开一个好友的聊天页面
+     *
+     * @param uid 好友的id
+     */
+    private void tryOpenChatByJs(String uid) {
+        String js = "(function(){" +
+                "let retry=0;" +
+                "function open(){" +
+                "  let list=document.getElementsByClassName('friend-item');" +
+                "  if(list.length===0){" +
+                "    if(retry++<10){setTimeout(open,300);}return;" +
+                "  }" +
+                "  for(let el of list){" +
+                "    if(el.getAttribute('data-uid')=='" + uid + "')" +
+                "    {el.click();return;}" +
+                "  }" +
+                "}" +
+                "open();" +
+                "})();";
+
+        webView.post(() -> webView.evaluateJavascript(js, null));
     }
 
     /**
@@ -225,7 +268,14 @@ public class MainActivity extends AppCompatActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+
         handleNotificationOpenIntent(intent);
+
+        // ✅ 如果页面已经加载过，直接执行 JS（不 reload！）
+        if (pendingUid != null) {
+            tryOpenChatByJs(pendingUid);
+            pendingUid = null;
+        }
     }
 
     private void setupNotificationPermissionIfNeeded() {
@@ -256,18 +306,17 @@ public class MainActivity extends AppCompatActivity {
         webView.addJavascriptInterface(new WebAppBridge(getApplicationContext()), "CodeBookApp");
     }
 
-    private void handleNotificationOpenIntent(Intent intent) {
-        if (intent == null || webView == null) return;
+    private boolean handleNotificationOpenIntent(Intent intent) {
+        if (intent == null) return false;
 
-        String openUrl = intent.getStringExtra(PushNotifyTool.EXTRA_OPEN_URL);
-        if (openUrl != null && !openUrl.isEmpty()) {
-            webView.loadUrl(openUrl);
+        Uri uri = intent.getData();
+        if (uri != null) {
+            pendingUid = uri.getQueryParameter("uid");
         }
 
+        // JSON 那段保持不动
         String rawJson = intent.getStringExtra(PushNotifyTool.EXTRA_MESSAGE_JSON);
         if (rawJson != null && !rawJson.isEmpty()) {
-            // 把通知点开的消息回传给网页（可选接收）
-            // 网页可以监听：window.addEventListener('nativePush', (e) => console.log(e.detail))
             String escaped = rawJson
                     .replace("\\", "\\\\")
                     .replace("'", "\\'")
@@ -277,6 +326,8 @@ public class MainActivity extends AppCompatActivity {
                     + escaped + "')}));}catch(e){}})();";
             webView.post(() -> webView.evaluateJavascript(js, null));
         }
+
+        return pendingUid != null;
     }
 
     /**

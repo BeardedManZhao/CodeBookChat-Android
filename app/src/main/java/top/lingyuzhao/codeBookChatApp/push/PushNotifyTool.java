@@ -9,7 +9,9 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.Build;
+import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
@@ -26,8 +28,11 @@ import java.nio.charset.StandardCharsets;
 import top.lingyuzhao.codeBookChatApp.AppConstants;
 import top.lingyuzhao.codeBookChatApp.MainActivity;
 import top.lingyuzhao.codeBookChatApp.R;
+import top.lingyuzhao.codeBookChatApp.utils.AvatarLoader;
 import top.lingyuzhao.codeBookChatApp.utils.HtmlTextExtractor;
+import top.lingyuzhao.utils.ASClass;
 import top.lingyuzhao.utils.CacheUtils;
+import top.lingyuzhao.utils.dataContainer.KeyValue;
 
 public final class PushNotifyTool {
     public static final String CHANNEL_ID_CHAT = "chat_message";
@@ -55,37 +60,36 @@ public final class PushNotifyTool {
         nm.createNotificationChannel(channel);
     }
 
-    public static boolean hasPostNotificationsPermission(Context context) {
-        if (Build.VERSION.SDK_INT < 33) return true;
-        return ActivityCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS)
-                == PackageManager.PERMISSION_GRANTED;
+    public static boolean hasPostNotificationsPermission01(Context context) {
+        if (Build.VERSION.SDK_INT < 33) return false;
+        return ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED;
     }
 
     public static void notifyFromWebSocketJson(Context context, ParsedMessage parsed) {
         ensureChatChannel(context);
-        if (!hasPostNotificationsPermission(context)) return;
+        if (hasPostNotificationsPermission01(context)) return;
 
         // 所有网络操作放到后台线程，避免阻塞 JS / UI
         Context appCtx = context.getApplicationContext();
         new Thread(() -> {
             String senderName = null;
-            Bitmap largeIcon = null;
             try {
-                senderName = getOrFetchUserName(parsed.sendId);
-                if (parsed.avatarUrl != null && !parsed.avatarUrl.isEmpty()) {
-                    largeIcon = fetchBitmap(parsed.avatarUrl);
+                KeyValue<String, String> orFetchUserNameAndAvatarUrl = getOrFetchUserNameAndAvatarUrl(parsed.sendId);
+                if (orFetchUserNameAndAvatarUrl != null) {
+                    senderName = orFetchUserNameAndAvatarUrl.getKey();
+                    parsed.setAvatarUrl(orFetchUserNameAndAvatarUrl.getValue());
                 }
             } catch (Throwable ignored) {
             }
-            postNotification(appCtx, parsed, new ExtraInfo(senderName, largeIcon));
+            postNotification(appCtx, parsed, senderName);
         }, "notify-resolve-user").start();
     }
 
-    public static void postNotification(Context context, String title, String body, String openUrl, String json, int notificationId, @Nullable ExtraInfo extra) {
+    public static void postNotification(final Context context, String title, String body, final String openUrl,
+                                        final String avatarUrl, final String json, final int notificationId, final String userName) {
         if (title == null || title.isEmpty()) {
-            String name = extra != null ? extra.senderName : null;
-            if (name != null && !name.isEmpty()) {
-                title = "【" + name + "】的消息";
+            if (userName != null && !userName.isEmpty()) {
+                title = "【" + userName + "】的消息";
             } else {
                 title = "新消息";
             }
@@ -94,53 +98,80 @@ public final class PushNotifyTool {
         if (body == null || body.isEmpty()) body = "你有一条新消息";
 
         Intent intent = buildOpenIntent(context, openUrl, json);
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        flags |= PendingIntent.FLAG_IMMUTABLE;
-        PendingIntent pi = PendingIntent.getActivity(context, notificationId, intent, flags);
-
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID_CHAT)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
-                .setContentIntent(pi)
-                .setAutoCancel(true)
-                .setPriority(NotificationCompat.PRIORITY_HIGH);
-
-        if (extra != null && extra.largeIcon != null) {
-            builder.setLargeIcon(extra.largeIcon);
+        if (openUrl != null && !openUrl.isEmpty()) {
+            intent.setData(Uri.parse(
+                    openUrl + (openUrl.contains("?") ? "&" : "?") + "t=" + System.currentTimeMillis()
+            ));
         }
 
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            // TODO: Consider calling
-            //    ActivityCompat#requestPermissions
-            // here to request the missing permissions, and then overriding
-            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-            //                                          int[] grantResults)
-            // to handle the case where the user grants the permission. See the documentation
-            // for ActivityCompat#requestPermissions for more details.
-            return;
-        }
-        NotificationManagerCompat.from(context).notify(notificationId, builder.build());
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
+
+        PendingIntent pi = PendingIntent.getActivity(
+                context,
+                notificationId,
+                intent,
+                flags
+        );
+        final String finalTitle = title;
+        final String finalBody = body;
+        AvatarLoader.load(context, avatarUrl, bitmap -> {
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID_CHAT)
+                    .setSmallIcon(R.mipmap.ic_launcher) // 固定
+                    .setLargeIcon(bitmap)               // 👈 用户头像
+                    .setContentTitle(finalTitle)
+                    .setContentText(finalBody)
+                    .setStyle(new NotificationCompat.BigTextStyle().bigText(finalBody))
+                    .setContentIntent(pi)
+                    .setAutoCancel(true)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH);
+
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                // TODO: Consider calling
+                //    ActivityCompat#requestPermissions
+                // here to request the missing permissions, and then overriding
+                //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                //                                          int[] grantResults)
+                // to handle the case where the user grants the permission. See the documentation
+                // for ActivityCompat#requestPermissions for more details.
+                return;
+            }
+            NotificationManagerCompat.from(context).notify(notificationId, builder.build());
+        });
     }
 
-    private static void postNotification(Context context, ParsedMessage msg, @Nullable ExtraInfo extra) {
+    private static void postNotification(Context context, ParsedMessage msg, String userName) {
         ensureChatChannel(context);
-        if (!hasPostNotificationsPermission(context)) return;
+        if (hasPostNotificationsPermission01(context)) return;
         postNotification(
-                context, msg.title, msg.body, msg.openUrl, msg.rawJson, msg.notificationId, extra
+                context, msg.title, msg.body, msg.openUrl, msg.avatarUrl, msg.rawJson, msg.notificationId, userName
         );
     }
 
     public static Intent buildOpenIntent(Context context, @Nullable String openUrl, @Nullable String rawJson) {
         Intent intent = new Intent(context, MainActivity.class);
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        if (openUrl != null && !openUrl.isEmpty()) intent.putExtra(EXTRA_OPEN_URL, openUrl);
-        if (rawJson != null && !rawJson.isEmpty()) intent.putExtra(EXTRA_MESSAGE_JSON, rawJson);
+        intent.setFlags(
+                Intent.FLAG_ACTIVITY_CLEAR_TOP |
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+        );
+
+        if (openUrl != null && !openUrl.isEmpty()) {
+            Log.i("test", openUrl);
+
+            // ✅ 关键：让 Intent 唯一
+            intent.setData(Uri.parse(openUrl));
+
+            // 额外参数（备用）
+            intent.putExtra(EXTRA_OPEN_URL, openUrl);
+        }
+
+        if (rawJson != null && !rawJson.isEmpty()) {
+            intent.putExtra(EXTRA_MESSAGE_JSON, rawJson);
+        }
         return intent;
     }
 
-    private static String fetchUserName(long userId) throws Exception {
+    private static KeyValue<String, String> fetchUserNameAndAvatarUrl(long userId) throws Exception {
         URL url = new URL(AppConstants.BASE_URL + "/api/user/" + userId);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setConnectTimeout(8000);
@@ -153,23 +184,22 @@ public final class PushNotifyTool {
             JSONObject root = new JSONObject(json);
             JSONObject data = root.optJSONObject("data");
             if (data == null) return null;
-            return data.optString("userName", null);
+            return new KeyValue<>(data.optString("userName", null), data.optString("avatarLink", AppConstants.LOGO_URL));
         }
     }
 
-    private static String getOrFetchUserName(long userId) {
+    private static KeyValue<String, String> getOrFetchUserNameAndAvatarUrl(long userId) {
         if (userId <= 0) return null;
         Object cached0 = USER_NAME_CACHE.get(String.valueOf(userId));
         if (cached0 != null) {
-            final String cached = cached0.toString();
-            if (!cached.isEmpty()) return cached;
+            return ASClass.transform(cached0);
         }
         try {
-            String name = fetchUserName(userId);
-            if (name != null && !name.isEmpty()) {
-                USER_NAME_CACHE.put(String.valueOf(userId), name);
+            final KeyValue<String, String> name_avatarUrl = fetchUserNameAndAvatarUrl(userId);
+            if (name_avatarUrl != null && !name_avatarUrl.getKey().isEmpty()) {
+                USER_NAME_CACHE.put(String.valueOf(userId), name_avatarUrl);
             }
-            return name;
+            return name_avatarUrl;
         } catch (Exception e) {
             return null;
         }
@@ -195,18 +225,6 @@ public final class PushNotifyTool {
         return out.toByteArray();
     }
 
-
-    public static final class ExtraInfo {
-        public final static ExtraInfo EXTRA_INFO_NULL = new ExtraInfo("系统", null);
-        final String senderName;
-        final Bitmap largeIcon;
-
-        ExtraInfo(String senderName, Bitmap largeIcon) {
-            this.senderName = senderName;
-            this.largeIcon = largeIcon;
-        }
-    }
-
     public static final class ParsedMessage {
         final long sendId;
         final long recId;
@@ -217,9 +235,9 @@ public final class PushNotifyTool {
         final String openUrl;
         final String rawJson;
         final int notificationId;
-        final @Nullable String avatarUrl;
         final JSONObject lastMessage;
         long ts;
+        private @Nullable String avatarUrl = AppConstants.LOGO_URL;
 
         public ParsedMessage(long sendId, long recId, String body, String title, long ts, int command, boolean last,
                              String openUrl, String rawJson, int notificationId, @Nullable String avatarUrl, JSONObject lastMessage) {
@@ -233,8 +251,8 @@ public final class PushNotifyTool {
             this.openUrl = openUrl;
             this.rawJson = rawJson;
             this.notificationId = notificationId;
-            this.avatarUrl = avatarUrl;
             this.lastMessage = lastMessage;
+            this.setAvatarUrl(avatarUrl);
         }
 
         public static @Nullable ParsedMessage fromJsonSafe(String raw) {
@@ -264,8 +282,8 @@ public final class PushNotifyTool {
 
             String openUrl = obj.optString("openUrl", null);
             if (openUrl == null || openUrl.isEmpty()) {
-                // 默认回到聊天页；如果你想跳到具体会话，可以在网页/服务端传 openUrl
-                openUrl = AppConstants.CHAT_PAGE_URL;
+                // 默认回到聊天页并打开对应的会话；如果你想跳到具体会话，可以在网页/服务端传 openUrl
+                openUrl = AppConstants.CHAT_PAGE_URL + "?uid=" + sendId;
             }
 
             String avatarUrl = obj.optString("avatarUrl", null);
@@ -342,6 +360,10 @@ public final class PushNotifyTool {
         @Nullable
         public String getAvatarUrl() {
             return avatarUrl;
+        }
+
+        public void setAvatarUrl(@Nullable String avatarUrl) {
+            this.avatarUrl = avatarUrl != null ? avatarUrl.startsWith("/") ? AppConstants.BASE_URL + avatarUrl : avatarUrl : AppConstants.LOGO_URL;
         }
 
         public JSONObject getLastMessage() {

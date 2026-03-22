@@ -17,6 +17,7 @@ public final class AppConstants {
      * 聊天页路径：{@link #BASE_URL}/chat.html
      */
     public static final String CHAT_PAGE_URL = BASE_URL + "/chat.html";
+    public static final String LOGO_URL = BASE_URL + "/image/logo.jpg";
     /**
      * WebSocket 根地址（WSS），例如：wss://chat.lingyuzhao.top
      */

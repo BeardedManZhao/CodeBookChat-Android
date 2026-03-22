@@ -101,8 +101,8 @@ public class WsUtils {
                         if (msg.isLast()) {
                             PushNotifyTool.postNotification(appContext, "您有消息",
                                     "您收到了 " + noReadCount.get() + " 个好友的新消息！",
-                                    DOMAIN_HTTP, "", (int) System.currentTimeMillis(),
-                                    PushNotifyTool.ExtraInfo.EXTRA_INFO_NULL);
+                                    DOMAIN_HTTP, AppConstants.LOGO_URL, "", (int) System.currentTimeMillis(),
+                                    null);
                             noReadCount.set(0);
                         }
                     }
@@ -181,8 +181,8 @@ public class WsUtils {
                             }
                             PushNotifyTool.postNotification(appContext, "您有消息",
                                     "您收到了 " + strings[1] + " 个好友的新消息！",
-                                    DOMAIN_HTTP, "", (int) System.currentTimeMillis(),
-                                    PushNotifyTool.ExtraInfo.EXTRA_INFO_NULL);
+                                    DOMAIN_HTTP, AppConstants.LOGO_URL, "", (int) System.currentTimeMillis(),
+                                    null);
                         }
                     }
                 } catch (NumberFormatException e) {
