@@ -363,7 +363,7 @@ public class KeepAliveForegroundService extends Service {
 
     private NotificationCompat.Builder buildNotification() {
         PendingIntent pending = PendingIntent.getActivity(this, 0,
-                PushNotifyTool.buildOpenIntent(this, null, null),
+                PushNotifyTool.buildOpenIntent(this, false, null, null),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)

@@ -74,10 +74,24 @@ public final class PushNotifyTool {
         new Thread(() -> {
             String senderName = null;
             try {
-                KeyValue<String, String> orFetchUserNameAndAvatarUrl = getOrFetchUserNameAndAvatarUrl(parsed.sendId);
-                if (orFetchUserNameAndAvatarUrl != null) {
-                    senderName = orFetchUserNameAndAvatarUrl.getKey();
-                    parsed.setAvatarUrl(orFetchUserNameAndAvatarUrl.getValue());
+                KeyValue<String, String> senderUser = getOrFetchUserNameAndAvatarUrl(parsed.sendId);
+                if (parsed.isGroup) {
+                    // 如果是群组就把格式改为群+发送者的样子
+                    KeyValue<String, String> groupUser = getOrFetchUserNameAndAvatarUrl(parsed.groupId);
+                    if (groupUser != null) {
+                        senderName = groupUser.getKey();
+                        parsed.setAvatarUrl(groupUser.getValue());
+                        // 重新设置消息 加上用户名前缀
+                        if (senderUser != null) {
+                            parsed.body = senderUser.getKey() + ':' + parsed.body;
+                        }
+                    }
+                } else {
+                    // 如果不是群组的 就不需要用别的了 直接把用户名和头像设置好就可以了
+                    if (senderUser != null) {
+                        senderName = senderUser.getKey();
+                        parsed.setAvatarUrl(senderUser.getValue());
+                    }
                 }
             } catch (Throwable ignored) {
             }
@@ -85,7 +99,7 @@ public final class PushNotifyTool {
         }, "notify-resolve-user").start();
     }
 
-    public static void postNotification(final Context context, String title, String body, final String openUrl,
+    public static void postNotification(final Context context, final boolean isGroup, String title, String body, final String openUrl,
                                         final String avatarUrl, final String json, final int notificationId, final String userName) {
         if (title == null || title.isEmpty()) {
             if (userName != null && !userName.isEmpty()) {
@@ -97,7 +111,7 @@ public final class PushNotifyTool {
 
         if (body == null || body.isEmpty()) body = "你有一条新消息";
 
-        Intent intent = buildOpenIntent(context, openUrl, json);
+        Intent intent = buildOpenIntent(context, isGroup, openUrl, json);
         if (openUrl != null && !openUrl.isEmpty()) {
             intent.setData(Uri.parse(
                     openUrl + (openUrl.contains("?") ? "&" : "?") + "t=" + System.currentTimeMillis()
@@ -144,11 +158,11 @@ public final class PushNotifyTool {
         ensureChatChannel(context);
         if (hasPostNotificationsPermission01(context)) return;
         postNotification(
-                context, msg.title, msg.body, msg.openUrl, msg.avatarUrl, msg.rawJson, msg.notificationId, userName
+                context, msg.isGroup, msg.title, msg.body, msg.openUrl, msg.avatarUrl, msg.rawJson, msg.notificationId, userName
         );
     }
 
-    public static Intent buildOpenIntent(Context context, @Nullable String openUrl, @Nullable String rawJson) {
+    public static Intent buildOpenIntent(Context context, boolean isGroup, @Nullable String openUrl, @Nullable String rawJson) {
         Intent intent = new Intent(context, MainActivity.class);
         intent.setFlags(
                 Intent.FLAG_ACTIVITY_CLEAR_TOP |
@@ -228,7 +242,8 @@ public final class PushNotifyTool {
     public static final class ParsedMessage {
         final long sendId;
         final long recId;
-        final String body;
+        final long groupId;
+        String body;
         final String title;
         final int command;
         final boolean last;
@@ -237,12 +252,14 @@ public final class PushNotifyTool {
         final int notificationId;
         final JSONObject lastMessage;
         long ts;
+        final boolean isGroup;
         private @Nullable String avatarUrl = AppConstants.LOGO_URL;
 
-        public ParsedMessage(long sendId, long recId, String body, String title, long ts, int command, boolean last,
+        public ParsedMessage(long sendId, long recId, long groupId, String body, String title, long ts, int command, boolean last,
                              String openUrl, String rawJson, int notificationId, @Nullable String avatarUrl, JSONObject lastMessage) {
             this.sendId = sendId;
             this.recId = recId;
+            this.groupId = groupId;
             this.body = body;
             this.title = title;
             this.ts = ts;
@@ -252,6 +269,7 @@ public final class PushNotifyTool {
             this.rawJson = rawJson;
             this.notificationId = notificationId;
             this.lastMessage = lastMessage;
+            this.isGroup =  groupId != 0;
             this.setAvatarUrl(avatarUrl);
         }
 
@@ -266,6 +284,7 @@ public final class PushNotifyTool {
 
         public static ParsedMessage fromJsonSafe(String raw, JSONObject obj) {
             long sendId = obj.optLong("sendId", 0);
+            long groupId = obj.optLong("groupId", 0);
             long recId = obj.optLong("recId", 0);
             String html = obj.optString("html", "");
             long ts = obj.optLong("ts", System.currentTimeMillis());
@@ -282,8 +301,8 @@ public final class PushNotifyTool {
 
             String openUrl = obj.optString("openUrl", null);
             if (openUrl == null || openUrl.isEmpty()) {
-                // 默认回到聊天页并打开对应的会话；如果你想跳到具体会话，可以在网页/服务端传 openUrl
-                openUrl = AppConstants.CHAT_PAGE_URL + "?uid=" + sendId;
+                // 默认回到聊天页并打开对应的会话; 这里填写的时候 优先 群组ID
+                openUrl = AppConstants.CHAT_PAGE_URL + "?uid=" + (groupId != 0 ? groupId : sendId);
             }
 
             String avatarUrl = obj.optString("avatarUrl", null);
@@ -297,7 +316,7 @@ public final class PushNotifyTool {
 
             // 查看是否存在 lastMessage
             JSONObject lastMessage = obj.optJSONObject("lastMessage");
-            return new ParsedMessage(sendId, recId, body, title, ts, command, last, openUrl, raw, notificationId, avatarUrl, lastMessage);
+            return new ParsedMessage(sendId, recId, groupId, body, title, ts, command, last, openUrl, raw, notificationId, avatarUrl, lastMessage);
         }
 
         private static int stableNotificationId(long sendId, long recId, long ts, String html) {
@@ -368,6 +387,14 @@ public final class PushNotifyTool {
 
         public JSONObject getLastMessage() {
             return lastMessage;
+        }
+
+        public long getGroupId() {
+            return groupId;
+        }
+
+        public boolean isGroup() {
+            return isGroup;
         }
     }
 }

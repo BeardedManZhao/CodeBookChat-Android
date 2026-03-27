@@ -99,7 +99,7 @@ public class WsUtils {
                     case 6 -> {
                         noReadCount.incrementAndGet();
                         if (msg.isLast()) {
-                            PushNotifyTool.postNotification(appContext, "您有消息",
+                            PushNotifyTool.postNotification(appContext, false, "您有消息",
                                     "您收到了 " + noReadCount.get() + " 个好友的新消息！",
                                     DOMAIN_HTTP, AppConstants.LOGO_URL, "", (int) System.currentTimeMillis(),
                                     null);
@@ -142,7 +142,7 @@ public class WsUtils {
         service.wsId = id;
 
         // ✅ 改为局部变量，避免两个 WS 实例共享静态字段互相污染
-        final PushNotifyTool.ParsedMessage newMsgTemplate = new PushNotifyTool.ParsedMessage(1, userId, "收到了新消息", "频道", System.currentTimeMillis(), 0,
+        final PushNotifyTool.ParsedMessage newMsgTemplate = new PushNotifyTool.ParsedMessage(1, userId, 0, "收到了新消息", "频道", System.currentTimeMillis(), 0,
                 true, AppConstants.CHAT_PAGE_URL, "", new Date().hashCode(), AppConstants.BASE_URL + "/image/logo.jpg", null);
 
         Request request = new Request.Builder()
@@ -179,7 +179,7 @@ public class WsUtils {
                                 Log.w(id, "command=6 解析失败");
                                 return;
                             }
-                            PushNotifyTool.postNotification(appContext, "您有消息",
+                            PushNotifyTool.postNotification(appContext, false, "您有消息",
                                     "您收到了 " + strings[1] + " 个好友的新消息！",
                                     DOMAIN_HTTP, AppConstants.LOGO_URL, "", (int) System.currentTimeMillis(),
                                     null);
