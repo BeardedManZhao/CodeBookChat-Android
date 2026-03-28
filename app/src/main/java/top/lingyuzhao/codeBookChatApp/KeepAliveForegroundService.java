@@ -366,7 +366,7 @@ public class KeepAliveForegroundService extends Service {
                 PushNotifyTool.buildOpenIntent(this, false, null, null),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
+                .setSmallIcon(R.drawable.notif_message)
                 .setContentTitle(getString(R.string.foreground_notification_title))
                 .setContentText(currentNotificationText)
                 .setContentIntent(pending)

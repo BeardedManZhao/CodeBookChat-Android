@@ -9,14 +9,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.View;
-import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.splashscreen.SplashScreen;
-
-import com.bumptech.glide.Glide;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -45,11 +42,6 @@ public class SplashActivity extends AppCompatActivity {
         SplashScreen.installSplashScreen(this);
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_splash);
-
-        ImageView splashImage = findViewById(R.id.splash_image);
-        Glide.with(this)
-                .load(AppConstants.BASE_URL + "/image/logo.jpg")
-                .into(splashImage);
 
         TextView statusText = findViewById(R.id.splash_status);
         statusText.setText(getString(R.string.loadingTextChinese) + "  v" + currentVersion);
