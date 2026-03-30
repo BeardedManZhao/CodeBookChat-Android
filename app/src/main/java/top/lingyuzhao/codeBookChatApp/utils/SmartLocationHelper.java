@@ -55,7 +55,9 @@ public class SmartLocationHelper {
 
     private static final int REQ_PERMISSION = 10001;
 
-    /** 持续模式下的默认推送间隔：5 秒 */
+    /**
+     * 持续模式下的默认推送间隔：5 秒
+     */
     private static final long DEFAULT_PUSH_INTERVAL_MS = 5000L;
 
     /**
@@ -69,16 +71,24 @@ public class SmartLocationHelper {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Object stateLock = new Object();
 
-    /** 是否允许工作 */
+    /**
+     * 是否允许工作
+     */
     private volatile boolean enabled = false;
 
-    /** 当前是否正在定位 */
+    /**
+     * 当前是否正在定位
+     */
     private volatile boolean running = false;
 
-    /** 是否正处于启动流程中 */
+    /**
+     * 是否正处于启动流程中
+     */
     private volatile boolean starting = false;
 
-    /** 是否一次性定位 */
+    /**
+     * 是否一次性定位
+     */
     private volatile boolean once = false;
 
     /**
@@ -93,28 +103,44 @@ public class SmartLocationHelper {
      */
     private float minDistance = 0f;
 
-    /** 单次定位超时时间，仅用于 once = true 的模式 */
+    /**
+     * 单次定位超时时间，仅用于 once = true 的模式
+     */
     private long timeoutMs = 10000L;
 
-    /** 持续模式下主动推送的间隔 */
+    /**
+     * 持续模式下主动推送的间隔
+     */
     private long pushIntervalMs = DEFAULT_PUSH_INTERVAL_MS;
 
-    /** 静止过滤阈值，单位：米 */
+    /**
+     * 静止过滤阈值，单位：米
+     */
     private float stationaryThresholdMeters = DEFAULT_STATIONARY_THRESHOLD_METERS;
 
-    /** 当前缓存的位置 */
+    /**
+     * 当前缓存的位置
+     */
     private volatile Location lastLocation;
 
-    /** 当前会话的 listener */
+    /**
+     * 当前会话的 listener
+     */
     private LocationListener currentListener;
 
-    /** 当前会话的推送任务 */
+    /**
+     * 当前会话的推送任务
+     */
     private Runnable currentPushTask;
 
-    /** 当前会话的超时任务 */
+    /**
+     * 当前会话的超时任务
+     */
     private Runnable currentTimeoutTask;
 
-    /** 用于让旧任务失效的 token */
+    /**
+     * 用于让旧任务失效的 token
+     */
     private int startToken = 0;
 
     /**
@@ -156,7 +182,7 @@ public class SmartLocationHelper {
     /**
      * 处理权限申请结果。
      *
-     * @param requestCode 请求码
+     * @param requestCode  请求码
      * @param grantResults 权限结果
      * @return true 表示权限已授予，false 表示未授予
      */
@@ -164,20 +190,6 @@ public class SmartLocationHelper {
         return requestCode == REQ_PERMISSION
                 && grantResults.length > 0
                 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-    }
-
-    /**
-     * 启用或禁用定位功能。
-     *
-     * <p>禁用后会立即停止当前定位会话。</p>
-     *
-     * @param enable true 表示启用，false 表示禁用
-     */
-    public void setEnabled(boolean enable) {
-        this.enabled = enable;
-        if (!enable) {
-            stop();
-        }
     }
 
     /**
@@ -203,7 +215,7 @@ public class SmartLocationHelper {
      * loc.setUpdateConfig(2000, 0);
      * }</pre>
      *
-     * @param minTime 最小更新时间，单位毫秒
+     * @param minTime     最小更新时间，单位毫秒
      * @param minDistance 最小更新距离，单位米
      */
     public void setUpdateConfig(long minTime, float minDistance) {
@@ -256,7 +268,7 @@ public class SmartLocationHelper {
      * </ul>
      *
      * @param once true 表示单次定位；false 表示持续定位
-     * @param cb 定位回调
+     * @param cb   定位回调
      */
     @RequiresPermission(Manifest.permission.ACCESS_FINE_LOCATION)
     public void start(final boolean once, final OnLocationCallback cb) {
@@ -480,7 +492,7 @@ public class SmartLocationHelper {
     /**
      * 立即回调位置。
      *
-     * @param cb 回调
+     * @param cb  回调
      * @param loc 定位对象
      */
     private void dispatch(OnLocationCallback cb, Location loc) {
@@ -492,9 +504,9 @@ public class SmartLocationHelper {
     /**
      * 回调错误。
      *
-     * @param cb 回调
+     * @param cb   回调
      * @param once 是否单次模式
-     * @param msg 错误信息
+     * @param msg  错误信息
      */
     private void error(OnLocationCallback cb, boolean once, String msg) {
         if (cb != null) {
@@ -506,9 +518,9 @@ public class SmartLocationHelper {
      * 启动失败时统一处理。
      *
      * @param token 本次会话 token
-     * @param once 是否单次模式
-     * @param cb 回调
-     * @param msg 错误信息
+     * @param once  是否单次模式
+     * @param cb    回调
+     * @param msg   错误信息
      */
     private void failStartIfNeeded(int token, boolean once, OnLocationCallback cb, String msg) {
         boolean shouldNotify = false;
@@ -594,6 +606,28 @@ public class SmartLocationHelper {
         }
     }
 
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    /**
+     * 启用或禁用定位功能。
+     *
+     * <p>禁用后会立即停止当前定位会话。</p>
+     *
+     * @param enable true 表示启用，false 表示禁用
+     */
+    public void setEnabled(boolean enable) {
+        this.enabled = enable;
+        if (!enable) {
+            stop();
+        }
+    }
+
+    public boolean isOnce() {
+        return once;
+    }
+
     /**
      * 定位回调接口。
      */
@@ -612,7 +646,7 @@ public class SmartLocationHelper {
          * 定位失败。
          *
          * @param once 是否是单次定位
-         * @param msg 错误信息
+         * @param msg  错误信息
          */
         void onError(boolean once, String msg);
     }

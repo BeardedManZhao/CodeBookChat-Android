@@ -52,7 +52,9 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
     //  与 KeepAliveForegroundService 的绑定
     // ------------------------------------------------------------------ //
 
-    /** 绑定成功后持有的 Service 实例（null 表示未绑定） */
+    /**
+     * 绑定成功后持有的 Service 实例（null 表示未绑定）
+     */
     private KeepAliveForegroundService boundService = null;
     private boolean isBound = false;
 
@@ -106,7 +108,7 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
         if (loc != null) {
             loc.stop();
         }
-        loc  = new SmartLocationHelper(this);
+        loc = new SmartLocationHelper(this);
         postNotificationsPermissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestPermission(),
                 isGranted -> { /* ignore */ }
@@ -133,7 +135,10 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
         OnBackPressedCallback callback = new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                if (customViewCallback != null) { exitFullscreen(); return; }
+                if (customViewCallback != null) {
+                    exitFullscreen();
+                    return;
+                }
                 if (webView.canGoBack()) {
                     webView.goBack();
                 } else {
@@ -160,7 +165,16 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                if (pendingUid != null) { tryOpenChatByJs(pendingUid); pendingUid = null; }
+                if (pendingUid != null) {
+                    tryOpenChatByJs(pendingUid);
+                    pendingUid = null;
+                }
+
+                // ✅ 主动检测 JS 环境
+                view.evaluateJavascript(
+                        "typeof window.CodeBookApp !== 'undefined'",
+                        value -> Log.d("WebView", "JS Bridge 是否存在: " + value)
+                );
             }
 
             @Override
@@ -186,14 +200,21 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
                                              FileChooserParams fileChooserParams) {
                 if (mFilePathCallback != null) mFilePathCallback.onReceiveValue(null);
                 mFilePathCallback = filePathCallback;
-                try { fileChooserLauncher.launch(fileChooserParams.createIntent()); }
-                catch (ActivityNotFoundException e) { mFilePathCallback = null; return false; }
+                try {
+                    fileChooserLauncher.launch(fileChooserParams.createIntent());
+                } catch (ActivityNotFoundException e) {
+                    mFilePathCallback = null;
+                    return false;
+                }
                 return true;
             }
 
             @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
-                if (customViewCallback != null) { onHideCustomView(); return; }
+                if (customViewCallback != null) {
+                    onHideCustomView();
+                    return;
+                }
                 customViewCallback = callback;
                 webView.setVisibility(View.GONE);
                 ViewGroup decorView = (ViewGroup) getWindow().getDecorView();
@@ -206,7 +227,9 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
             }
 
             @Override
-            public void onHideCustomView() { exitFullscreen(); }
+            public void onHideCustomView() {
+                exitFullscreen();
+            }
         });
 
         setupKeyboardInsetListener();
@@ -264,7 +287,10 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
         super.onNewIntent(intent);
         setIntent(intent);
         handleNotificationOpenIntent(intent);
-        if (pendingUid != null) { tryOpenChatByJs(pendingUid); pendingUid = null; }
+        if (pendingUid != null) {
+            tryOpenChatByJs(pendingUid);
+            pendingUid = null;
+        }
     }
 
     // ------------------------------------------------------------------ //
@@ -277,6 +303,10 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
      */
     @Override
     public void onLocationRequested(boolean once) {
+        if (loc.isEnabled() && !loc.isOnce()) {
+            // 代表不需要操作 因为 单次 多次 都是没什么区别的
+            return;
+        }
         loc.setEnabled(true);
         if (!loc.check(this)) return;
 
@@ -335,7 +365,10 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
     }
 
     private void exitFullscreen() {
-        if (customViewCallback != null) { customViewCallback.onCustomViewHidden(); customViewCallback = null; }
+        if (customViewCallback != null) {
+            customViewCallback.onCustomViewHidden();
+            customViewCallback = null;
+        }
         fullscreenContainer.removeAllViews();
         if (fullscreenContainer.getParent() != null)
             ((ViewGroup) fullscreenContainer.getParent()).removeView(fullscreenContainer);
@@ -346,7 +379,8 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
 
     private void setupNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < 33) return;
-        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return;
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED)
+            return;
         postNotificationsPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS);
     }
 

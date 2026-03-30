@@ -10,6 +10,7 @@ package top.lingyuzhao.codeBookChatApp;
 public interface LocationRequestCallback {
     /**
      * Service 需要获取位置时回调此方法，Activity 在此方法中启动定位
+     *
      * @param once 是否只定位一次
      */
     void onLocationRequested(boolean once);

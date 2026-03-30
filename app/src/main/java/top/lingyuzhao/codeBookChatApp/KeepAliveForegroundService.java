@@ -44,7 +44,21 @@ public class KeepAliveForegroundService extends Service {
     public static final String EXTRA_WS_TOKEN = "extra_ws_token";
     public static final String EXTRA_NOTIFICATION_TEXT = "extra_notification_text";
     public static final String CHANNEL_ID = "keep_alive_channel";
-
+    public static final String intentCommandKey = "command";
+    /**
+     * 数值类型 是否启动GPS
+     * <p>
+     * -1 代表不操作 也是默认值
+     * 1 代表启动GPS 一次性
+     * 0 代表启动GPS 实时
+     */
+    public static final String RUN_GPS_ONCE = "RUN_GPS_ONCE";
+    /**
+     * 布尔类型 是否关闭 GPS
+     * false 代表不操作 也是默认值
+     * true  代表关闭 GPS 定位
+     */
+    public static final String STOP_GPS_ONCE = "STOP_GPS_ONCE";
     private static final String TAG = "KeepAliveSvc";
     private static final int NOTIFICATION_ID = 0x1;
     private static final long HEARTBEAT_INTERVAL = 25_000L;  // 25 秒
@@ -57,50 +71,40 @@ public class KeepAliveForegroundService extends Service {
     // ------------------------------------------------------------------ //
     //  Binder（供 Activity 通过 bindService 拿到 Service 实例）
     // ------------------------------------------------------------------ //
-
-    /**
-     * 绑定凭证。Activity 通过 {@link ServiceConnection#onServiceConnected} 拿到此对象，
-     * 再调用 {@link #getService()} 即可直接操作 Service。
-     */
-    public class LocalBinder extends Binder {
-        public KeepAliveForegroundService getService() {
-            return KeepAliveForegroundService.this;
-        }
-    }
-
     private final IBinder binder = new LocalBinder();
+    /**
+     * 对外暴露，供 WsUtils 回调写入
+     */
+    public WebSocket webSocketClient = null;
 
     // ------------------------------------------------------------------ //
     //  字段
     // ------------------------------------------------------------------ //
-
-    /** 对外暴露，供 WsUtils 回调写入 */
-    public WebSocket webSocketClient = null;
-
     private String wsId = TAG;
     private HandlerThread handlerThread;
     private Handler wsHandler;
     private PowerManager.WakeLock wakeLock;
-
-    /** 只存 userId，token 仅首次使用，重连不再需要 */
+    /**
+     * 只存 userId，token 仅首次使用，重连不再需要
+     */
     private long currentUserId = 0;
     private long reconnectDelay = RECONNECT_BASE;
-
     private ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;
     private boolean isAllowReConnect = false;
     private String currentNotificationText = "连接中…";
-
-    /** 弱引用，防止内存泄漏 */
+    /**
+     * 弱引用，防止内存泄漏
+     */
     private WeakReference<LocationRequestCallback> callbackRef;
-
-    // ------------------------------------------------------------------ //
-    //  静态工具方法
-    // ------------------------------------------------------------------ //
 
     public static boolean isDestroyed() {
         return isDestroyed;
     }
+
+    // ------------------------------------------------------------------ //
+    //  静态工具方法
+    // ------------------------------------------------------------------ //
 
     /**
      * 任意位置调用，更新常驻通知文字。
@@ -112,16 +116,16 @@ public class KeepAliveForegroundService extends Service {
         context.sendBroadcast(intent);
     }
 
-    // ------------------------------------------------------------------ //
-    //  回调注册（供绑定后的 Activity 调用）
-    // ------------------------------------------------------------------ //
-
     /**
      * 设置定位请求回调，Activity 绑定成功后立即调用。
      */
     public void setLocationRequestCallback(LocationRequestCallback callback) {
         callbackRef = new WeakReference<>(callback);
     }
+
+    // ------------------------------------------------------------------ //
+    //  回调注册（供绑定后的 Activity 调用）
+    // ------------------------------------------------------------------ //
 
     /**
      * 当需要让 MainActivity 定位时调用此方法，通过回调通知 Activity。
@@ -143,11 +147,6 @@ public class KeepAliveForegroundService extends Service {
             Log.w(TAG, "closeLocationFromActivity：回调已释放，无法触发定位");
         }
     }
-
-
-    // ------------------------------------------------------------------ //
-    //  生命周期
-    // ------------------------------------------------------------------ //
 
     @RequiresApi(api = Build.VERSION_CODES.TIRAMISU)
     @Override
@@ -183,30 +182,58 @@ public class KeepAliveForegroundService extends Service {
                 RECEIVER_NOT_EXPORTED);
     }
 
+
+    // ------------------------------------------------------------------ //
+    //  生命周期
+    // ------------------------------------------------------------------ //
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         // 第一步先升前台，防止 ANR
         startForegroundCompat();
 
         if (intent != null) {
-            String text = intent.getStringExtra(EXTRA_NOTIFICATION_TEXT);
-            if (text != null && !text.isEmpty()) updateNotificationText(text);
-            String sessionId = intent.getStringExtra("sessionId");
-            if (sessionId != null) {
-                // 代表是回传的 sessionId
-                Log.i(sessionId, "收到新的ID，开始变更ID为：" + sessionId);
-                setSessionId(sessionId);
-            }
-
-            // 只在首次收到 token 时用 token 连接，之后重连不走这里
-            String token = intent.getStringExtra(EXTRA_WS_TOKEN);
-            long userId = intent.getLongExtra("userId", 0);
-            Log.i(TAG, "为用户【" + userId + "】的全功能通道做准备！token=" + token);
-            if (token != null && !token.isEmpty() && userId != 0) {
-                currentUserId = userId;
-                wsHandler.post(() -> doConnectWithToken(token, userId));
-            } else {
-                Log.i(TAG, "全功能通道未能建立，缺失关键数据！");
+            switch (intent.getIntExtra(intentCommandKey, -1)) {
+                case 5 -> {
+                    // 只在首次收到 token 时用 token 连接，之后重连不走这里
+                    String token = intent.getStringExtra(EXTRA_WS_TOKEN);
+                    long userId = intent.getLongExtra("userId", 0);
+                    if (token != null && !token.isEmpty() && userId != 0) {
+                        Log.i(TAG, "为用户【" + userId + "】的全功能通道做准备！token=" + token);
+                        currentUserId = userId;
+                        wsHandler.post(() -> doConnectWithToken(token, userId));
+                    } else {
+                        Log.i(TAG, "全功能通道未能建立，缺失关键数据！");
+                    }
+                }
+                case 10 -> {
+                    // RUN_GPS_ONCE 检测
+                    final int RUN_GPS_ONCE_VALUE = intent.getIntExtra(RUN_GPS_ONCE, -1);
+                    if (RUN_GPS_ONCE_VALUE != -1) {
+                        Log.i(TAG, "收到GPS启动命令! 是否一次性 = " + RUN_GPS_ONCE_VALUE);
+                        // 代表要启动GPS
+                        this.requestLocationFromActivity(RUN_GPS_ONCE_VALUE == 1);
+                    } else {
+                        Log.i(TAG, "收到GPS保持不变，once = " + RUN_GPS_ONCE_VALUE);
+                    }
+                }
+                case 12 -> {
+                    String text = intent.getStringExtra(EXTRA_NOTIFICATION_TEXT);
+                    if (text != null && !text.isEmpty()) updateNotificationText(text);
+                    String sessionId = intent.getStringExtra("sessionId");
+                    if (sessionId != null) {
+                        // 代表是回传的 sessionId
+                        Log.i(sessionId, "收到新的ID，开始变更ID为：" + sessionId);
+                        setSessionId(sessionId);
+                    }
+                }
+                case 13 -> {
+                    // STOP_GPS_ONCE 检测
+                    if (intent.getBooleanExtra(STOP_GPS_ONCE, false)) {
+                        // 代表要关闭GPS
+                        this.closeLocationFromActivity();
+                    }
+                }
             }
         }
         return START_STICKY;
@@ -244,10 +271,6 @@ public class KeepAliveForegroundService extends Service {
         releaseWakeLock();
     }
 
-    // ------------------------------------------------------------------ //
-    //  定位结果回传（Activity 定位成功后调用此方法）
-    // ------------------------------------------------------------------ //
-
     /**
      * Activity 定位成功后，通过 Binder 调用此方法将坐标传回 Service。
      *
@@ -272,10 +295,12 @@ public class KeepAliveForegroundService extends Service {
     }
 
     // ------------------------------------------------------------------ //
-    //  连接逻辑
+    //  定位结果回传（Activity 定位成功后调用此方法）
     // ------------------------------------------------------------------ //
 
-    /** 首次连接：使用 token，建立全功能频道 */
+    /**
+     * 首次连接：使用 token，建立全功能频道
+     */
     private void doConnectWithToken(String token, long userId) {
         closeWebSocket("new_token_connect");
         try {
@@ -289,7 +314,13 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
-    /** 断线重连：走无 token 的同步频道，不依赖过期 token */
+    // ------------------------------------------------------------------ //
+    //  连接逻辑
+    // ------------------------------------------------------------------ //
+
+    /**
+     * 断线重连：走无 token 的同步频道，不依赖过期 token
+     */
     private void doConnectSync() {
         if (currentUserId == 0) {
             Log.w(TAG, "userId=0，跳过重连");
@@ -307,7 +338,9 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
-    /** 外部（WsUtils 回调）调用：通知 Service 连接已断，触发重连 */
+    /**
+     * 外部（WsUtils 回调）调用：通知 Service 连接已断，触发重连
+     */
     public void onWebSocketDisconnected(String reason) {
         Log.w(TAG, "WS 断开: " + reason + "，" + reconnectDelay + "ms 后重连");
         wsHandler.removeCallbacksAndMessages("heartbeat");
@@ -326,30 +359,14 @@ public class KeepAliveForegroundService extends Service {
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
     }
 
-    // ------------------------------------------------------------------ //
-    //  心跳
-    // ------------------------------------------------------------------ //
-
     private void scheduleHeartbeat() {
         wsHandler.removeCallbacksAndMessages("heartbeat");
         wsHandler.postAtTime(heartbeatTask, "heartbeat",
                 SystemClock.uptimeMillis() + HEARTBEAT_INTERVAL);
     }
 
-    private final Runnable heartbeatTask = () -> {
-        if (isDestroyed) return;
-        if (webSocketClient != null && webSocketClient.send("0")) {
-            Log.d(wsId, "心跳 ✓");
-            acquireWakeLock(); // 刷新 WakeLock 超时
-            scheduleHeartbeat();
-        } else {
-            Log.w(wsId, "心跳失败，触发重连");
-            onWebSocketDisconnected("heartbeat_failed");
-        }
-    };
-
     // ------------------------------------------------------------------ //
-    //  网络变化监听
+    //  心跳
     // ------------------------------------------------------------------ //
 
     private void registerNetworkCallback() {
@@ -397,10 +414,20 @@ public class KeepAliveForegroundService extends Service {
             } catch (Throwable ignored) {
             }
         }
-    }
+    }    private final Runnable heartbeatTask = () -> {
+        if (isDestroyed) return;
+        if (webSocketClient != null && webSocketClient.send("0")) {
+            Log.d(wsId, "心跳 ✓");
+            acquireWakeLock(); // 刷新 WakeLock 超时
+            scheduleHeartbeat();
+        } else {
+            Log.w(wsId, "心跳失败，触发重连");
+            onWebSocketDisconnected("heartbeat_failed");
+        }
+    };
 
     // ------------------------------------------------------------------ //
-    //  WakeLock
+    //  网络变化监听
     // ------------------------------------------------------------------ //
 
     private void acquireWakeLock() {
@@ -419,7 +446,7 @@ public class KeepAliveForegroundService extends Service {
     }
 
     // ------------------------------------------------------------------ //
-    //  WebSocket 工具
+    //  WakeLock
     // ------------------------------------------------------------------ //
 
     private void closeWebSocket(String reason) {
@@ -432,10 +459,6 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
-    // ------------------------------------------------------------------ //
-    //  通知
-    // ------------------------------------------------------------------ //
-
     private void startForegroundCompat() {
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, buildNotification().build(),
@@ -444,6 +467,10 @@ public class KeepAliveForegroundService extends Service {
             startForeground(NOTIFICATION_ID, buildNotification().build());
         }
     }
+
+    // ------------------------------------------------------------------ //
+    //  WebSocket 工具
+    // ------------------------------------------------------------------ //
 
     private void ensureChannel() {
         NotificationManager nm = getSystemService(NotificationManager.class);
@@ -456,6 +483,10 @@ public class KeepAliveForegroundService extends Service {
         ch.setShowBadge(false);
         nm.createNotificationChannel(ch);
     }
+
+    // ------------------------------------------------------------------ //
+    //  通知
+    // ------------------------------------------------------------------ //
 
     private NotificationCompat.Builder buildNotification() {
         PendingIntent pending = PendingIntent.getActivity(this, 0,
@@ -477,10 +508,6 @@ public class KeepAliveForegroundService extends Service {
         if (nm != null) nm.notify(NOTIFICATION_ID, buildNotification().build());
     }
 
-    // ------------------------------------------------------------------ //
-    //  getter / setter
-    // ------------------------------------------------------------------ //
-
     public String getSessionId() {
         return wsId;
     }
@@ -488,4 +515,20 @@ public class KeepAliveForegroundService extends Service {
     public void setSessionId(String wsId) {
         this.wsId = wsId;
     }
+
+    // ------------------------------------------------------------------ //
+    //  getter / setter
+    // ------------------------------------------------------------------ //
+
+    /**
+     * 绑定凭证。Activity 通过 {@link ServiceConnection#onServiceConnected} 拿到此对象，
+     * 再调用 {@link #getService()} 即可直接操作 Service。
+     */
+    public class LocalBinder extends Binder {
+        public KeepAliveForegroundService getService() {
+            return KeepAliveForegroundService.this;
+        }
+    }
+
+
 }

@@ -8,11 +8,13 @@ public final class AppConstants {
     /**
      * 根域名（无协议），例如：chat.lingyuzhao.top
      */
-    public static final String HOST = "192.168.0.9:8080";
+    public static final String
+//            HOST = "192.168.1.126:8080";
+            HOST = "chat.lingyuzhao.top";
     /**
      * 根网址（HTTPS），例如：https://chat.lingyuzhao.top
      */
-    public static final String BASE_URL = "http://" + HOST;
+    public static final String BASE_URL = "https://" + HOST;
     /**
      * 聊天页路径：{@link #BASE_URL}/chat.html
      */
@@ -21,7 +23,7 @@ public final class AppConstants {
     /**
      * WebSocket 根地址（WSS），例如：wss://chat.lingyuzhao.top
      */
-    public static final String WSS_BASE = "ws://" + HOST;
+    public static final String WSS_BASE = "wss://" + HOST;
     public static final String PACKAGE_NAME = "top.lingyuzhao.codeBookChatApp";
 
     private AppConstants() {
