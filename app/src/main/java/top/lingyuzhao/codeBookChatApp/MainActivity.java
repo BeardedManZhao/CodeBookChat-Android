@@ -242,7 +242,7 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
         settings.setAllowContentAccess(true);
 
         // 新增/优化性能设置
-        settings.setCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);         // 优先使用缓存，减少网络等待
+        // settings.setCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);         // 优先使用缓存，减少网络等待
         settings.setLoadsImagesAutomatically(true);
         settings.setBlockNetworkImage(false);                               // 允许图片加载（可根据需要改）
 
