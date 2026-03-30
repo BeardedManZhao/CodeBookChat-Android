@@ -19,8 +19,6 @@ import top.lingyuzhao.codeBookChatApp.push.PushNotifyTool;
 import top.lingyuzhao.utils.StrUtils;
 
 public class WsUtils {
-
-    private static final String TAG = "WsUtils";
     private static final String DOMAIN = AppConstants.WSS_BASE;
     private static final String DOMAIN_HTTP = AppConstants.CHAT_PAGE_URL;
 
@@ -53,8 +51,7 @@ public class WsUtils {
             final Context appContext,
             final KeepAliveForegroundService service) throws URISyntaxException {
 
-        final String id = "WS|" + System.currentTimeMillis();
-        service.wsId = id;
+        final String id = service.getSessionId() != null ? service.getSessionId() : "WS|" + System.currentTimeMillis();
 
         // ✅ 每个连接独立计数，消除静态变量竞争
         final AtomicInteger noReadCount = new AtomicInteger(0);
@@ -83,7 +80,6 @@ public class WsUtils {
                 Log.i(id, "收到: " + text);
                 PushNotifyTool.ParsedMessage msg = PushNotifyTool.ParsedMessage.fromJsonSafe(text);
                 if (msg == null) return;
-
                 switch (msg.getCommand()) {
                     case 0 -> {
                         if (msg.getRecId() == userId) {
@@ -106,13 +102,25 @@ public class WsUtils {
                             noReadCount.set(0);
                         }
                     }
+                    case 10 -> {
+                        final boolean once = Boolean.parseBoolean(msg.getBody());
+                        Log.i(id, "收到GPS的定位请求，客户端应开始处理！定位类型：" + (once ? "一次性定位" : "持续定位"));
+                        // 调用定位器 让 MainActivity 定位
+                        service.requestLocationFromActivity(once);
+                    }
+                    case 13 -> {
+                        // 调用终止定位器的逻辑
+                        Log.i(id, "收到GPS的定位终止，客户端应开始处理！");
+                        service.closeLocationFromActivity();
+                    }
                 }
             }
 
             @Override
             public void onFailure(WebSocket webSocket, Throwable t, Response response) {
                 // ✅ 网络错误 → 通知 Service 重连（走无 token 路径）
-                Log.e(id, "连接失败: " + t.getMessage());
+                Log.e(id, "连接失败: " + t.getMessage() + "; GPS的定位终止，因ws错误，客户端应开始处理！");
+                service.closeLocationFromActivity();
                 service.onWebSocketDisconnected("failure: " + t.getMessage());
             }
 
@@ -138,8 +146,8 @@ public class WsUtils {
             final Context appContext,
             final KeepAliveForegroundService service) throws URISyntaxException {
 
-        final String id = "WS-sync|" + System.currentTimeMillis();
-        service.wsId = id;
+        final String id = "WS-sy|" + System.currentTimeMillis();
+        service.setSessionId(id);
 
         // ✅ 改为局部变量，避免两个 WS 实例共享静态字段互相污染
         final PushNotifyTool.ParsedMessage newMsgTemplate = new PushNotifyTool.ParsedMessage(1, userId, 0, "收到了新消息", "频道", System.currentTimeMillis(), 0,

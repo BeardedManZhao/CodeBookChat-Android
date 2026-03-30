@@ -243,7 +243,6 @@ public final class PushNotifyTool {
         final long sendId;
         final long recId;
         final long groupId;
-        String body;
         final String title;
         final int command;
         final boolean last;
@@ -251,9 +250,11 @@ public final class PushNotifyTool {
         final String rawJson;
         final int notificationId;
         final JSONObject lastMessage;
-        long ts;
         final boolean isGroup;
+        String body;
+        long ts;
         private @Nullable String avatarUrl = AppConstants.LOGO_URL;
+        private String sessionId = "未知";
 
         public ParsedMessage(long sendId, long recId, long groupId, String body, String title, long ts, int command, boolean last,
                              String openUrl, String rawJson, int notificationId, @Nullable String avatarUrl, JSONObject lastMessage) {
@@ -269,7 +270,7 @@ public final class PushNotifyTool {
             this.rawJson = rawJson;
             this.notificationId = notificationId;
             this.lastMessage = lastMessage;
-            this.isGroup =  groupId != 0;
+            this.isGroup = groupId != 0;
             this.setAvatarUrl(avatarUrl);
         }
 
@@ -316,7 +317,10 @@ public final class PushNotifyTool {
 
             // 查看是否存在 lastMessage
             JSONObject lastMessage = obj.optJSONObject("lastMessage");
-            return new ParsedMessage(sendId, recId, groupId, body, title, ts, command, last, openUrl, raw, notificationId, avatarUrl, lastMessage);
+            final ParsedMessage parsedMessage = new ParsedMessage(sendId, recId, groupId, body, title, ts, command, last, openUrl, raw, notificationId, avatarUrl, lastMessage);
+            final String session = obj.optString("sessionId", null);
+            parsedMessage.setSessionId(session);
+            return parsedMessage;
         }
 
         private static int stableNotificationId(long sendId, long recId, long ts, String html) {
@@ -395,6 +399,14 @@ public final class PushNotifyTool {
 
         public boolean isGroup() {
             return isGroup;
+        }
+
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public void setSessionId(String sessionId) {
+            this.sessionId = sessionId;
         }
     }
 }

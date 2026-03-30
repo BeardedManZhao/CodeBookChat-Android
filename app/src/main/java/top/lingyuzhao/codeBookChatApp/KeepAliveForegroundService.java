@@ -10,10 +10,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.location.Location;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
+import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -26,6 +28,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
 
+import java.lang.ref.WeakReference;
 import java.net.URISyntaxException;
 
 import okhttp3.WebSocket;
@@ -34,52 +37,117 @@ import top.lingyuzhao.codeBookChatApp.utils.WsUtils;
 
 public class KeepAliveForegroundService extends Service {
 
+    // ------------------------------------------------------------------ //
+    //  常量
+    // ------------------------------------------------------------------ //
+
     public static final String EXTRA_WS_TOKEN = "extra_ws_token";
     public static final String EXTRA_NOTIFICATION_TEXT = "extra_notification_text";
     public static final String CHANNEL_ID = "keep_alive_channel";
 
     private static final String TAG = "KeepAliveSvc";
     private static final int NOTIFICATION_ID = 0x1;
-    private static final long HEARTBEAT_INTERVAL = 25_000L;  // 25秒
-    private static final long RECONNECT_BASE = 3_000L;   // 首次重连等待
-    private static final long RECONNECT_MAX = 60_000L;  // 最长退避
-    private static final int WAKELOCK_TIMEOUT = 10 * 60 * 1000; // 10分钟
+    private static final long HEARTBEAT_INTERVAL = 25_000L;  // 25 秒
+    private static final long RECONNECT_BASE = 3_000L;        // 首次重连等待
+    private static final long RECONNECT_MAX = 60_000L;        // 最长退避
+    private static final int WAKELOCK_TIMEOUT = 10 * 60 * 1000; // 10 分钟
+
     private static boolean isDestroyed = false;
-    // 对外暴露，供 WsUtils 回调写入
+
+    // ------------------------------------------------------------------ //
+    //  Binder（供 Activity 通过 bindService 拿到 Service 实例）
+    // ------------------------------------------------------------------ //
+
+    /**
+     * 绑定凭证。Activity 通过 {@link ServiceConnection#onServiceConnected} 拿到此对象，
+     * 再调用 {@link #getService()} 即可直接操作 Service。
+     */
+    public class LocalBinder extends Binder {
+        public KeepAliveForegroundService getService() {
+            return KeepAliveForegroundService.this;
+        }
+    }
+
+    private final IBinder binder = new LocalBinder();
+
+    // ------------------------------------------------------------------ //
+    //  字段
+    // ------------------------------------------------------------------ //
+
+    /** 对外暴露，供 WsUtils 回调写入 */
     public WebSocket webSocketClient = null;
-    public String wsId = TAG;
+
+    private String wsId = TAG;
     private HandlerThread handlerThread;
     private Handler wsHandler;
     private PowerManager.WakeLock wakeLock;
-    // ✅ 只存 userId，token 仅首次使用，重连不再需要
+
+    /** 只存 userId，token 仅首次使用，重连不再需要 */
     private long currentUserId = 0;
     private long reconnectDelay = RECONNECT_BASE;
+
     private ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;
     private boolean isAllowReConnect = false;
-
     private String currentNotificationText = "连接中…";
 
-    // ------------------------------------------------------------------ //
-    //  生命周期
-    // ------------------------------------------------------------------ //
+    /** 弱引用，防止内存泄漏 */
+    private WeakReference<LocationRequestCallback> callbackRef;
 
-    public KeepAliveForegroundService() {
-
-    }
+    // ------------------------------------------------------------------ //
+    //  静态工具方法
+    // ------------------------------------------------------------------ //
 
     public static boolean isDestroyed() {
         return isDestroyed;
     }
 
     /**
-     * 任意位置调用，更新常驻通知文字
+     * 任意位置调用，更新常驻通知文字。
      */
     public static void requestUpdateNotificationText(Context context, String text) {
-        Intent intent = new Intent("ACTION_UPDATE_NOTIFICATION").setPackage(AppConstants.PACKAGE_NAME);
+        Intent intent = new Intent("ACTION_UPDATE_NOTIFICATION")
+                .setPackage(AppConstants.PACKAGE_NAME);
         intent.putExtra(EXTRA_NOTIFICATION_TEXT, text);
         context.sendBroadcast(intent);
     }
+
+    // ------------------------------------------------------------------ //
+    //  回调注册（供绑定后的 Activity 调用）
+    // ------------------------------------------------------------------ //
+
+    /**
+     * 设置定位请求回调，Activity 绑定成功后立即调用。
+     */
+    public void setLocationRequestCallback(LocationRequestCallback callback) {
+        callbackRef = new WeakReference<>(callback);
+    }
+
+    /**
+     * 当需要让 MainActivity 定位时调用此方法，通过回调通知 Activity。
+     */
+    public void requestLocationFromActivity(boolean once) {
+        LocationRequestCallback callback = callbackRef != null ? callbackRef.get() : null;
+        if (callback != null) {
+            callback.onLocationRequested(once);
+        } else {
+            Log.w(TAG, "requestLocationFromActivity：回调已释放，无法触发定位");
+        }
+    }
+
+    public void closeLocationFromActivity() {
+        LocationRequestCallback callback = callbackRef != null ? callbackRef.get() : null;
+        if (callback != null) {
+            callback.onLocationClose();
+        } else {
+            Log.w(TAG, "closeLocationFromActivity：回调已释放，无法触发定位");
+        }
+    }
+
+
+    // ------------------------------------------------------------------ //
+    //  生命周期
+    // ------------------------------------------------------------------ //
 
     @RequiresApi(api = Build.VERSION_CODES.TIRAMISU)
     @Override
@@ -99,16 +167,15 @@ public class KeepAliveForegroundService extends Service {
         wakeLock.setReferenceCounted(false);
         acquireWakeLock();
 
-        // 注册网络重启回调
+        // 注册网络恢复回调
         registerNetworkCallback();
-        // 注册通知接收器
+
+        // 注册通知文字更新广播
         BroadcastReceiver notificationReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 String text = intent.getStringExtra(EXTRA_NOTIFICATION_TEXT);
-                if (text != null) {
-                    updateNotificationText(text);
-                }
+                if (text != null) updateNotificationText(text);
             }
         };
         registerReceiver(notificationReceiver,
@@ -118,34 +185,41 @@ public class KeepAliveForegroundService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // ✅ 第一步先升前台，防止 ANR
+        // 第一步先升前台，防止 ANR
         startForegroundCompat();
 
         if (intent != null) {
-            // 更新通知文字
             String text = intent.getStringExtra(EXTRA_NOTIFICATION_TEXT);
-            if (text != null && !text.isEmpty()) {
-                updateNotificationText(text);
+            if (text != null && !text.isEmpty()) updateNotificationText(text);
+            String sessionId = intent.getStringExtra("sessionId");
+            if (sessionId != null) {
+                // 代表是回传的 sessionId
+                Log.i(sessionId, "收到新的ID，开始变更ID为：" + sessionId);
+                setSessionId(sessionId);
             }
 
-            // ✅ 只在首次收到 token 时用 token 连接，之后重连不走这里
+            // 只在首次收到 token 时用 token 连接，之后重连不走这里
             String token = intent.getStringExtra(EXTRA_WS_TOKEN);
             long userId = intent.getLongExtra("userId", 0);
-            Log.i("KeepAliveForegroundService.onStartCommand", "为用户【" + userId + "】的全功能通道做准备！" + ";token=" + token);
+            Log.i(TAG, "为用户【" + userId + "】的全功能通道做准备！token=" + token);
             if (token != null && !token.isEmpty() && userId != 0) {
                 currentUserId = userId;
-                // 首次用 token 建立全功能频道
                 wsHandler.post(() -> doConnectWithToken(token, userId));
             } else {
-                Log.i("KeepAliveForegroundService.onStartCommand", "全功能通道未能建立，因为缺失关键数据！");
+                Log.i(TAG, "全功能通道未能建立，缺失关键数据！");
             }
         }
         return START_STICKY;
     }
 
     @Override
+    public IBinder onBind(Intent intent) {
+        // 返回 binder 供 Activity 通过 bindService 获取 Service 实例
+        return binder;
+    }
+
+    @Override
     public void onTaskRemoved(Intent rootIntent) {
-        // 用户划掉 App 后，用 AlarmManager 1 秒后重拉服务
         Log.w(TAG, "任务被划掉，计划重启");
         Intent restart = new Intent(getApplicationContext(), KeepAliveForegroundService.class);
         restart.putExtra("userId", currentUserId);
@@ -171,17 +245,37 @@ public class KeepAliveForegroundService extends Service {
     }
 
     // ------------------------------------------------------------------ //
+    //  定位结果回传（Activity 定位成功后调用此方法）
+    // ------------------------------------------------------------------ //
+
+    /**
+     * Activity 定位成功后，通过 Binder 调用此方法将坐标传回 Service。
+     *
+     * @param latitude    纬度
+     * @param longitude   经度
+     * @param rawLocation 原始 Location 对象（可为 null）
+     */
+    public void onLocationResult(double latitude, double longitude, Location rawLocation) {
+        Log.d(TAG, "收到位置回传: " + latitude + ", " + longitude);
+
+        if (webSocketClient == null) {
+            Log.w(TAG, "onLocationResult：WebSocket 尚未连接，丢弃本次位置");
+            return;
+        }
+
+        final com.alibaba.fastjson2.JSONObject json = new com.alibaba.fastjson2.JSONObject();
+        json.put("command", 11);
+        json.put("lat", latitude);
+        json.put("lng", longitude);
+        json.put("sessionId", getSessionId());
+        webSocketClient.send(json.toString());
+    }
+
+    // ------------------------------------------------------------------ //
     //  连接逻辑
     // ------------------------------------------------------------------ //
 
-    @Override
-    public IBinder onBind(Intent intent) {
-        return null;
-    }
-
-    /**
-     * 首次连接：使用 token，建立全功能频道
-     */
+    /** 首次连接：使用 token，建立全功能频道 */
     private void doConnectWithToken(String token, long userId) {
         closeWebSocket("new_token_connect");
         try {
@@ -195,9 +289,7 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
-    /**
-     * ✅ 断线重连：永远走无 token 的同步频道，不依赖过期 token
-     */
+    /** 断线重连：走无 token 的同步频道，不依赖过期 token */
     private void doConnectSync() {
         if (currentUserId == 0) {
             Log.w(TAG, "userId=0，跳过重连");
@@ -215,19 +307,13 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
-    /**
-     * 外部（WsUtils 回调）调用：通知 Service 连接已断，触发重连
-     */
+    /** 外部（WsUtils 回调）调用：通知 Service 连接已断，触发重连 */
     public void onWebSocketDisconnected(String reason) {
         Log.w(TAG, "WS 断开: " + reason + "，" + reconnectDelay + "ms 后重连");
         wsHandler.removeCallbacksAndMessages("heartbeat");
         webSocketClient = null;
         scheduleReconnect();
     }
-
-    // ------------------------------------------------------------------ //
-    //  心跳（文本 "0"，无需服务端改动）
-    // ------------------------------------------------------------------ //
 
     private void scheduleReconnect() {
         if (isDestroyed) return;
@@ -240,11 +326,31 @@ public class KeepAliveForegroundService extends Service {
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
     }
 
+    // ------------------------------------------------------------------ //
+    //  心跳
+    // ------------------------------------------------------------------ //
+
     private void scheduleHeartbeat() {
         wsHandler.removeCallbacksAndMessages("heartbeat");
         wsHandler.postAtTime(heartbeatTask, "heartbeat",
                 SystemClock.uptimeMillis() + HEARTBEAT_INTERVAL);
     }
+
+    private final Runnable heartbeatTask = () -> {
+        if (isDestroyed) return;
+        if (webSocketClient != null && webSocketClient.send("0")) {
+            Log.d(wsId, "心跳 ✓");
+            acquireWakeLock(); // 刷新 WakeLock 超时
+            scheduleHeartbeat();
+        } else {
+            Log.w(wsId, "心跳失败，触发重连");
+            onWebSocketDisconnected("heartbeat_failed");
+        }
+    };
+
+    // ------------------------------------------------------------------ //
+    //  网络变化监听
+    // ------------------------------------------------------------------ //
 
     private void registerNetworkCallback() {
         connectivityManager = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
@@ -291,20 +397,10 @@ public class KeepAliveForegroundService extends Service {
             } catch (Throwable ignored) {
             }
         }
-    }    private final Runnable heartbeatTask = () -> {
-        if (isDestroyed) return;
-        if (webSocketClient != null && webSocketClient.send("0")) {
-            Log.d(wsId, "心跳 ✓");
-            acquireWakeLock(); // 刷新 WakeLock 超时
-            scheduleHeartbeat();
-        } else {
-            Log.w(wsId, "心跳失败，触发重连");
-            onWebSocketDisconnected("heartbeat_failed");
-        }
-    };
+    }
 
     // ------------------------------------------------------------------ //
-    //  网络变化监听：恢复联网后立即重连
+    //  WakeLock
     // ------------------------------------------------------------------ //
 
     private void acquireWakeLock() {
@@ -323,7 +419,7 @@ public class KeepAliveForegroundService extends Service {
     }
 
     // ------------------------------------------------------------------ //
-    //  WakeLock
+    //  WebSocket 工具
     // ------------------------------------------------------------------ //
 
     private void closeWebSocket(String reason) {
@@ -336,6 +432,10 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
+    // ------------------------------------------------------------------ //
+    //  通知
+    // ------------------------------------------------------------------ //
+
     private void startForegroundCompat() {
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, buildNotification().build(),
@@ -344,10 +444,6 @@ public class KeepAliveForegroundService extends Service {
             startForeground(NOTIFICATION_ID, buildNotification().build());
         }
     }
-
-    // ------------------------------------------------------------------ //
-    //  工具方法
-    // ------------------------------------------------------------------ //
 
     private void ensureChannel() {
         NotificationManager nm = getSystemService(NotificationManager.class);
@@ -381,7 +477,15 @@ public class KeepAliveForegroundService extends Service {
         if (nm != null) nm.notify(NOTIFICATION_ID, buildNotification().build());
     }
 
+    // ------------------------------------------------------------------ //
+    //  getter / setter
+    // ------------------------------------------------------------------ //
 
+    public String getSessionId() {
+        return wsId;
+    }
 
-
+    public void setSessionId(String wsId) {
+        this.wsId = wsId;
+    }
 }
