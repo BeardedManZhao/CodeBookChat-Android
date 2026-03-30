@@ -143,7 +143,7 @@ public class WebAppBridge {
      */
     private void handleCommand13() {
         Intent intent = new Intent(appContext, KeepAliveForegroundService.class);
-        intent.putExtra(KeepAliveForegroundService.intentCommandKey, 10);
+        intent.putExtra(KeepAliveForegroundService.intentCommandKey, 13);
         intent.putExtra(KeepAliveForegroundService.STOP_GPS_ONCE, true);
 
         appContext.startForegroundService(intent);

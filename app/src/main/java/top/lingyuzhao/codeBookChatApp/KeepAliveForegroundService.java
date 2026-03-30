@@ -230,6 +230,7 @@ public class KeepAliveForegroundService extends Service {
                 case 13 -> {
                     // STOP_GPS_ONCE 检测
                     if (intent.getBooleanExtra(STOP_GPS_ONCE, false)) {
+                        Log.i(TAG, "收到关闭 GPS 命令");
                         // 代表要关闭GPS
                         this.closeLocationFromActivity();
                     }
@@ -279,7 +280,7 @@ public class KeepAliveForegroundService extends Service {
      * @param rawLocation 原始 Location 对象（可为 null）
      */
     public void onLocationResult(double latitude, double longitude, Location rawLocation) {
-        Log.d(TAG, "收到位置回传: " + latitude + ", " + longitude);
+        Log.d(TAG, "收到位置回传");
 
         if (webSocketClient == null) {
             Log.w(TAG, "onLocationResult：WebSocket 尚未连接，丢弃本次位置");

@@ -303,12 +303,15 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
      */
     @Override
     public void onLocationRequested(boolean once) {
-        if (loc.isEnabled() && !loc.isOnce()) {
+        if (loc.isEnabled() && once && !loc.isOnce()) {
             // 代表不需要操作 因为 单次 多次 都是没什么区别的
+            Log.i(TAG, "onLocationRequested 检测到不需要启动，因为目前处于实时检测状态，一次性启动可被实时状态包裹其中，直接跳过");
             return;
         }
-        loc.setEnabled(true);
-        if (!loc.check(this)) return;
+        if (!loc.check(this)) {
+            Log.w(TAG, "onLocationRequested：check 不通过，已跳过");
+            return;
+        }
 
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED
@@ -317,11 +320,11 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
             Log.w(TAG, "onLocationRequested：缺少定位权限，已跳过");
             return;
         }
-
+        loc.setEnabled(true);
         loc.start(once, new SmartLocationHelper.OnLocationCallback() {
             @Override
             public void onLocation(double lat, double lng, Location raw) {
-                Log.d(TAG, "定位成功: " + lat + ", " + lng);
+                Log.d(TAG, "定位成功!");
                 // ✅ 核心修复：将定位结果回传给 Service
                 if (isBound && boundService != null) {
                     boundService.onLocationResult(lat, lng, raw);
