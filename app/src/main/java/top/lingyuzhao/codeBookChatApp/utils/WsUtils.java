@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import java.net.URISyntaxException;
+import java.util.BitSet;
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -19,8 +20,6 @@ import top.lingyuzhao.codeBookChatApp.push.PushNotifyTool;
 import top.lingyuzhao.utils.StrUtils;
 
 public class WsUtils {
-
-    private static final String TAG = "WsUtils";
     private static final String DOMAIN = AppConstants.WSS_BASE;
     private static final String DOMAIN_HTTP = AppConstants.CHAT_PAGE_URL;
 
@@ -53,8 +52,7 @@ public class WsUtils {
             final Context appContext,
             final KeepAliveForegroundService service) throws URISyntaxException {
 
-        final String id = "WS|" + System.currentTimeMillis();
-        service.wsId = id;
+        final String id = service.getSessionId() != null ? service.getSessionId() : "WS|" + System.currentTimeMillis();
 
         // ✅ 每个连接独立计数，消除静态变量竞争
         final AtomicInteger noReadCount = new AtomicInteger(0);
@@ -81,38 +79,14 @@ public class WsUtils {
                     return;
                 }
                 Log.i(id, "收到: " + text);
-                PushNotifyTool.ParsedMessage msg = PushNotifyTool.ParsedMessage.fromJsonSafe(text);
-                if (msg == null) return;
-
-                switch (msg.getCommand()) {
-                    case 0 -> {
-                        if (msg.getRecId() == userId) {
-                            PushNotifyTool.notifyFromWebSocketJson(appContext, msg);
-                        }
-                    }
-                    case 2 -> {
-                        PushNotifyTool.ParsedMessage last =
-                                PushNotifyTool.ParsedMessage.fromJsonSafe(
-                                        msg.getRawJson(), msg.getLastMessage());
-                        PushNotifyTool.notifyFromWebSocketJson(appContext, last);
-                    }
-                    case 6 -> {
-                        noReadCount.incrementAndGet();
-                        if (msg.isLast()) {
-                            PushNotifyTool.postNotification(appContext, false, "您有消息",
-                                    "您收到了 " + noReadCount.get() + " 个好友的新消息！",
-                                    DOMAIN_HTTP, AppConstants.LOGO_URL, "", (int) System.currentTimeMillis(),
-                                    null);
-                            noReadCount.set(0);
-                        }
-                    }
-                }
+                handlerJsonMessage(PushNotifyTool.ParsedMessage.fromJsonSafe(text), userId, appContext, noReadCount, id, service);
             }
 
             @Override
             public void onFailure(WebSocket webSocket, Throwable t, Response response) {
                 // ✅ 网络错误 → 通知 Service 重连（走无 token 路径）
-                Log.e(id, "连接失败: " + t.getMessage());
+                Log.e(id, "连接失败: " + t.getMessage() + "; GPS的定位终止，因ws错误，客户端应开始处理！");
+                service.closeLocationFromActivity();
                 service.onWebSocketDisconnected("failure: " + t.getMessage());
             }
 
@@ -129,6 +103,48 @@ public class WsUtils {
         });
     }
 
+    private static void handlerJsonMessage(PushNotifyTool.ParsedMessage msg, long userId, Context appContext, AtomicInteger noReadCount, String id, KeepAliveForegroundService service) {
+        if (msg == null) return;
+        switch (msg.getCommand()) {
+            case 0 -> {
+                if (msg.getRecId() == userId) {
+                    PushNotifyTool.notifyFromWebSocketJson(appContext, msg);
+                }
+            }
+            case 2 -> {
+                PushNotifyTool.ParsedMessage last =
+                        PushNotifyTool.ParsedMessage.fromJsonSafe(
+                                msg.getRawJson(), msg.getLastMessage());
+                PushNotifyTool.notifyFromWebSocketJson(appContext, last);
+            }
+            case 6 -> {
+                noReadCount.incrementAndGet();
+                if (msg.isLast()) {
+                    PushNotifyTool.postNotification(appContext, false, "您有消息",
+                            "您收到了 " + noReadCount.get() + " 个好友的新消息！",
+                            DOMAIN_HTTP, AppConstants.LOGO_URL, "", (int) System.currentTimeMillis(),
+                            null);
+                    noReadCount.set(0);
+                }
+            }
+            case 10 -> {
+                final boolean once = Boolean.parseBoolean(msg.getBody());
+                Log.i(id, "收到GPS的定位请求，客户端应开始处理！定位类型：" + (once ? "一次性定位" : "持续定位"));
+                // 调用定位器 让 MainActivity 定位
+                service.requestLocationFromActivity(once);
+            }
+            case 13 -> {
+                // 调用终止定位器的逻辑 这个是广播的 所以需要校验下id
+                if (service.getSessionId().equals(msg.getSessionId())) {
+                    Log.i(id, "收到GPS的定位终止，客户端应开始处理！");
+                    service.closeLocationFromActivity();
+                } else {
+                    Log.i(id, "收到GPS的定位终止，但是这个终止不是发给这个客户端的，只是因为广播所以收到了");
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ //
     //  同步频道（无 token，断线重连专用）
     // ------------------------------------------------------------------ //
@@ -138,8 +154,7 @@ public class WsUtils {
             final Context appContext,
             final KeepAliveForegroundService service) throws URISyntaxException {
 
-        final String id = "WS-sync|" + System.currentTimeMillis();
-        service.wsId = id;
+        final String id = "WS-sy|" + System.currentTimeMillis();
 
         // ✅ 改为局部变量，避免两个 WS 实例共享静态字段互相污染
         final PushNotifyTool.ParsedMessage newMsgTemplate = new PushNotifyTool.ParsedMessage(1, userId, 0, "收到了新消息", "频道", System.currentTimeMillis(), 0,
@@ -151,6 +166,13 @@ public class WsUtils {
 
         service.webSocketClient = getClient().newWebSocket(request, new WebSocketListener() {
 
+            private final BitSet allowUseJsonHandlerCommands = new BitSet();
+
+            {
+                allowUseJsonHandlerCommands.set(10);
+                allowUseJsonHandlerCommands.set(13);
+            }
+
             @Override
             public void onOpen(WebSocket webSocket, Response response) {
                 Log.i(id, "同步频道连接成功（轻量模式）");
@@ -160,6 +182,16 @@ public class WsUtils {
             @Override
             public void onMessage(WebSocket webSocket, String text) {
                 Log.i(id, "同步收到: " + text);
+                if (text.charAt(0) == '{') {
+                    // 代表是 json 数据 看看能不能处理
+                    PushNotifyTool.ParsedMessage msg = PushNotifyTool.ParsedMessage.fromJsonSafe(text);
+                    if (msg != null && allowUseJsonHandlerCommands.get(msg.getCommand())) {
+                        // 代表可以传递给 json 的处理方法
+                        handlerJsonMessage(msg, userId, appContext, null, id, service);
+                    }
+                    // 不再走同步处理了 已经结束了
+                    return;
+                }
                 try {
                     boolean notSure = text.charAt(text.length() - 1) == '?';
                     final String[] strings = StrUtils.splitBy(notSure ? text.substring(0, text.length() - 1) : text, '&', 2);

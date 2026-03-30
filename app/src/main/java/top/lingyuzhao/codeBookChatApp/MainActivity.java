@@ -1,18 +1,23 @@
 package top.lingyuzhao.codeBookChatApp;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
+import android.location.Location;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.IBinder;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -27,6 +32,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
 import androidx.work.Constraints;
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.NetworkType;
@@ -36,26 +42,73 @@ import androidx.work.WorkManager;
 import java.util.concurrent.TimeUnit;
 
 import top.lingyuzhao.codeBookChatApp.push.PushNotifyTool;
+import top.lingyuzhao.codeBookChatApp.utils.SmartLocationHelper;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements LocationRequestCallback {
+
+    private static final String TAG = "MainActivity";
+
+    // ------------------------------------------------------------------ //
+    //  与 KeepAliveForegroundService 的绑定
+    // ------------------------------------------------------------------ //
+
+    /**
+     * 绑定成功后持有的 Service 实例（null 表示未绑定）
+     */
+    private KeepAliveForegroundService boundService = null;
+    private boolean isBound = false;
+
+    /**
+     * ServiceConnection：Activity 绑定 / 解绑时由系统回调。
+     * 绑定成功后立即向 Service 注册当前 Activity 作为定位回调接收方。
+     */
+    private final ServiceConnection serviceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            KeepAliveForegroundService.LocalBinder localBinder =
+                    (KeepAliveForegroundService.LocalBinder) service;
+            boundService = localBinder.getService();
+            boundService.setLocationRequestCallback(MainActivity.this);
+            isBound = true;
+            Log.i(TAG, "已绑定到 KeepAliveForegroundService");
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            boundService = null;
+            isBound = false;
+            Log.w(TAG, "KeepAliveForegroundService 连接断开");
+        }
+    };
+
+    // ------------------------------------------------------------------ //
+    //  其它字段
+    // ------------------------------------------------------------------ //
+
+    private SmartLocationHelper loc;
     private ActivityResultLauncher<Intent> fileChooserLauncher;
     private ValueCallback<Uri[]> mFilePathCallback;
     private WebView webView;
     private ActivityResultLauncher<String> postNotificationsPermissionLauncher;
-    private FrameLayout fullscreenContainer; // 用于承载全屏视频的容器
+    private FrameLayout fullscreenContainer;
     private WebChromeClient.CustomViewCallback customViewCallback;
     private long firstBackTime = 0;
     private String pendingUid;
 
+    // ------------------------------------------------------------------ //
+    //  生命周期
+    // ------------------------------------------------------------------ //
+
     @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        if (getSupportActionBar() != null) {
-            getSupportActionBar().hide();
-        }
+        if (getSupportActionBar() != null) getSupportActionBar().hide();
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
+        if (loc != null) {
+            loc.stop();
+        }
+        loc = new SmartLocationHelper(this);
         postNotificationsPermissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestPermission(),
                 isGranted -> { /* ignore */ }
@@ -68,9 +121,7 @@ public class MainActivity extends AppCompatActivity {
                         Uri[] results = null;
                         if (result.getResultCode() == RESULT_OK && result.getData() != null) {
                             String dataString = result.getData().getDataString();
-                            if (dataString != null) {
-                                results = new Uri[]{Uri.parse(dataString)};
-                            }
+                            if (dataString != null) results = new Uri[]{Uri.parse(dataString)};
                         }
                         mFilePathCallback.onReceiveValue(results);
                         mFilePathCallback = null;
@@ -78,95 +129,79 @@ public class MainActivity extends AppCompatActivity {
                 });
 
         webView = findViewById(R.id.webview);
-        // ⚠️ 必须在 setWebChromeClient 之前初始化，否则回调触发时为 null
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
         fullscreenContainer = new FrameLayout(this);
-        // --- 新的返回键处理逻辑 ---
-        OnBackPressedCallback callback = new OnBackPressedCallback(true /* enabled by default */) {
+
+        OnBackPressedCallback callback = new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                // 如果现在是全屏就先退出全屏
                 if (customViewCallback != null) {
                     exitFullscreen();
                     return;
                 }
-                // 在这里实现您原有的逻辑
                 if (webView.canGoBack()) {
                     webView.goBack();
                 } else {
-                    long secondTime = System.currentTimeMillis();
-                    if (secondTime - firstBackTime > 2000) {
+                    long now = System.currentTimeMillis();
+                    if (now - firstBackTime > 2000) {
                         Toast.makeText(MainActivity.this, "再按一次退出应用", Toast.LENGTH_SHORT).show();
-                        firstBackTime = secondTime;
+                        firstBackTime = now;
                     } else {
-                        // 如果间隔小于等于2秒，则允许系统处理返回操作（即退出Activity）
-                        // 注意：这里不再是调用 super.onBackPressed()
-                        // 我们需要告诉 dispatcher 我们不再拦截这个事件
-                        // 通过setEnabled(false) 然后调用默认行为
-                        // 最标准的做法是移除此callback或让它失效
-
-                        // 标准做法：设置回调无效，让系统处理默认返回
                         this.setEnabled(false);
-                        getOnBackPressedDispatcher().onBackPressed(); // 触发系统默认行为
-                        // this.setEnabled(true); // 如果需要的话，可以在此处重新启用
+                        getOnBackPressedDispatcher().onBackPressed();
                     }
                 }
             }
         };
-
-        // 将回调添加到调度器
         getOnBackPressedDispatcher().addCallback(this, callback);
-        // 初始化其它东西
+
         setupNotificationPermissionIfNeeded();
         scheduleWakeWhenOnlineWork();
         setupWebBridge(webView);
 
-        // ✅ 修复3：补充 DownloadListener，捕获 Content-Disposition 触发的下载（视频等）
         webView.setDownloadListener(new WebViewDownloadListener(this));
-        // 设置 web 客户端 并实现其中的处理方案
-        webView.setWebViewClient(new WebViewClient() {
 
-            // ✅ 新增这个
+        webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-
-                // 页面加载完成后再执行 JS
                 if (pendingUid != null) {
                     tryOpenChatByJs(pendingUid);
                     pendingUid = null;
                 }
+
+                // ✅ 主动检测 JS 环境
+                view.evaluateJavascript(
+                        "typeof window.CodeBookApp !== 'undefined'",
+                        value -> Log.d("WebView", "JS Bridge 是否存在: " + value)
+                );
             }
 
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
                 final String string = uri.toString();
-                Log.i("MainActivity", string);
+                Log.i(TAG, string);
                 if (string.contains("/download") || string.contains("/files")) {
                     new AlertDialog.Builder(MainActivity.this)
                             .setTitle("确认跳转")
                             .setMessage("我们会使用您的系统浏览器进行下载，是否继续？")
-                            .setPositiveButton("确定", (dialog, which) -> {
-                                Intent intent = new Intent(Intent.ACTION_VIEW, uri);
-                                startActivity(intent);
-                            })
-                            .setNegativeButton("取消", null)
-                            .show();
+                            .setPositiveButton("确定", (d, w) -> startActivity(new Intent(Intent.ACTION_VIEW, uri)))
+                            .setNegativeButton("取消", null).show();
                     return true;
                 }
                 return false;
             }
         });
+
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
-            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
-                if (mFilePathCallback != null) {
-                    mFilePathCallback.onReceiveValue(null);
-                }
+            public boolean onShowFileChooser(WebView wv, ValueCallback<Uri[]> filePathCallback,
+                                             FileChooserParams fileChooserParams) {
+                if (mFilePathCallback != null) mFilePathCallback.onReceiveValue(null);
                 mFilePathCallback = filePathCallback;
-                Intent intent = fileChooserParams.createIntent();
                 try {
-                    fileChooserLauncher.launch(intent);
+                    fileChooserLauncher.launch(fileChooserParams.createIntent());
                 } catch (ActivityNotFoundException e) {
                     mFilePathCallback = null;
                     return false;
@@ -180,36 +215,45 @@ public class MainActivity extends AppCompatActivity {
                     onHideCustomView();
                     return;
                 }
-
                 customViewCallback = callback;
                 webView.setVisibility(View.GONE);
-
                 ViewGroup decorView = (ViewGroup) getWindow().getDecorView();
                 fullscreenContainer.addView(view, new ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT));
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 decorView.addView(fullscreenContainer, new ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT));
-
-                // ✅ 跟随传感器，横竖由用户决定
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR);
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
             }
 
             @Override
             public void onHideCustomView() {
-                // ✅ 修复1：只调用 exitFullscreen()，不再重复移除，避免 NPE
                 exitFullscreen();
             }
         });
+
         setupKeyboardInsetListener();
+
         final WebSettings settings = webView.getSettings();
+        // 已有设置...
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
-        // 检查看看有没有携带 openUrl
+
+        // 新增/优化性能设置
+        settings.setCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);         // 优先使用缓存，减少网络等待
+        settings.setLoadsImagesAutomatically(true);
+        settings.setBlockNetworkImage(false);                               // 允许图片加载（可根据需要改）
+
+        // 硬件加速（强烈推荐，对复杂页面效果明显）
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);               // 或在 XML / Manifest 中全局开启
+
+        // 其他常用加速
+        settings.setJavaScriptCanOpenWindowsAutomatically(true);
+        settings.setDatabaseEnabled(true);
+        settings.setGeolocationEnabled(true);                               // 如果需要定位
+
         final Intent intent = getIntent();
         final Uri uri = intent.getData();
         if (handleNotificationOpenIntent(intent) && uri != null) {
@@ -219,63 +263,118 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * 尝试打开一个好友的聊天页面
-     *
-     * @param uid 好友的id
-     */
-    private void tryOpenChatByJs(String uid) {
-        String js = "(function(){" +
-                "let retry=0;" +
-                "function open(){" +
-                "  let list=document.getElementsByClassName('friend-item');" +
-                "  if(list.length===0){" +
-                "    if(retry++<10){setTimeout(open,300);}return;" +
-                "  }" +
-                "  for(let el of list){" +
-                "    if(el.getAttribute('data-uid')=='" + uid + "')" +
-                "    {el.click();return;}" +
-                "  }" +
-                "}" +
-                "open();" +
-                "})();";
-
-        webView.post(() -> webView.evaluateJavascript(js, null));
+    @Override
+    protected void onStart() {
+        super.onStart();
+        // 绑定 Service，Service 已由 WebAppBridge 通过 startForegroundService 启动
+        // BIND_AUTO_CREATE 可确保即使 Service 还未启动时也能成功绑定
+        Intent bindIntent = new Intent(this, KeepAliveForegroundService.class);
+        bindService(bindIntent, serviceConnection, Context.BIND_AUTO_CREATE);
     }
 
-    /**
-     * 封装退出全屏的逻辑（唯一出口，避免重复移除导致 NPE）
-     */
-    private void exitFullscreen() {
-        if (customViewCallback != null) {
-            customViewCallback.onCustomViewHidden();
-            customViewCallback = null;
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (isBound) {
+            unbindService(serviceConnection);
+            isBound = false;
+            boundService = null;
         }
-
-        fullscreenContainer.removeAllViews();
-        if (fullscreenContainer.getParent() != null) {
-            ((ViewGroup) fullscreenContainer.getParent()).removeView(fullscreenContainer);
-        }
-
-        webView.setVisibility(View.VISIBLE);
-
-        // ✅ 退出后恢复跟随传感器（或改为 UNSPECIFIED 恢复系统默认）
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-
         handleNotificationOpenIntent(intent);
-
-        // ✅ 如果页面已经加载过，直接执行 JS（不 reload！）
         if (pendingUid != null) {
             tryOpenChatByJs(pendingUid);
             pendingUid = null;
         }
+    }
+
+    // ------------------------------------------------------------------ //
+    //  LocationRequestCallback 实现（核心修复）
+    // ------------------------------------------------------------------ //
+
+    /**
+     * Service 需要定位时回调此方法。
+     * 定位成功后通过 Binder 引用调用 Service.onLocationResult，由 Service 负责上传。
+     */
+    @Override
+    public void onLocationRequested(boolean once) {
+        if (loc.isEnabled() && !loc.isOnce()) {
+            // 代表不需要操作 因为 单次 多次 都是没什么区别的
+            return;
+        }
+        loc.setEnabled(true);
+        if (!loc.check(this)) return;
+
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED
+                || ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "onLocationRequested：缺少定位权限，已跳过");
+            return;
+        }
+
+        loc.start(once, new SmartLocationHelper.OnLocationCallback() {
+            @Override
+            public void onLocation(double lat, double lng, Location raw) {
+                Log.d(TAG, "定位成功: " + lat + ", " + lng);
+                // ✅ 核心修复：将定位结果回传给 Service
+                if (isBound && boundService != null) {
+                    boundService.onLocationResult(lat, lng, raw);
+                } else {
+                    Log.w(TAG, "定位成功但 Service 未绑定，无法回传");
+                }
+            }
+
+            @Override
+            public void onError(boolean once, String msg) {
+                Log.e(TAG, "定位失败: " + msg + "; " + (once ? "已停止定位" : "尝试重新启动！"));
+                if (!once && msg.endsWith("超时")) {
+                    onLocationRequested(false); // 如果是持续定位且是超时的错误就重启，不得被断开
+                }
+            }
+        });
+    }
+
+    @Override
+    public void onLocationClose() {
+        loc.setEnabled(false);
+    }
+
+    // ------------------------------------------------------------------ //
+    //  工具方法
+    // ------------------------------------------------------------------ //
+
+    private void tryOpenChatByJs(String uid) {
+        String js = "(function(){" +
+                "let retry=0;" +
+                "function open(){" +
+                "  let list=document.getElementsByClassName('friend-item');" +
+                "  if(list.length===0){if(retry++<10){setTimeout(open,300);}return;}" +
+                "  for(let el of list){" +
+                "    if(el.getAttribute('data-uid')=='" + uid + "'){el.click();return;}" +
+                "  }" +
+                "}" +
+                "open();" +
+                "})();";
+        webView.post(() -> webView.evaluateJavascript(js, null));
+    }
+
+    private void exitFullscreen() {
+        if (customViewCallback != null) {
+            customViewCallback.onCustomViewHidden();
+            customViewCallback = null;
+        }
+        fullscreenContainer.removeAllViews();
+        if (fullscreenContainer.getParent() != null)
+            ((ViewGroup) fullscreenContainer.getParent()).removeView(fullscreenContainer);
+        webView.setVisibility(View.VISIBLE);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
     }
 
     private void setupNotificationPermissionIfNeeded() {
@@ -285,122 +384,55 @@ public class MainActivity extends AppCompatActivity {
         postNotificationsPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS);
     }
 
-    /**
-     * 调度“联网时唤醒”的周期任务，便于在联网时启动前台服务以接收新消息
-     */
     private void scheduleWakeWhenOnlineWork() {
         Constraints constraints = new Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build();
-        PeriodicWorkRequest work = new PeriodicWorkRequest.Builder(WakeWhenOnlineWorker.class, 15, TimeUnit.MINUTES)
-                .setConstraints(constraints)
-                .build();
+                .setRequiredNetworkType(NetworkType.CONNECTED).build();
+        PeriodicWorkRequest work = new PeriodicWorkRequest.Builder(
+                WakeWhenOnlineWorker.class, 15, TimeUnit.MINUTES)
+                .setConstraints(constraints).build();
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-                "wake_when_online",
-                ExistingPeriodicWorkPolicy.KEEP,
-                work);
+                "wake_when_online", ExistingPeriodicWorkPolicy.KEEP, work);
     }
 
     private void setupWebBridge(WebView webView) {
-        // 网页收到 WS 消息后调用：window.CodeBookApp.notify(JSON.stringify(msg))
+        // WebAppBridge 已拆分为独立类
         webView.addJavascriptInterface(new WebAppBridge(getApplicationContext()), "CodeBookApp");
     }
 
     private boolean handleNotificationOpenIntent(Intent intent) {
         if (intent == null) return false;
-
         Uri uri = intent.getData();
-        if (uri != null) {
-            pendingUid = uri.getQueryParameter("uid");
-        }
+        if (uri != null) pendingUid = uri.getQueryParameter("uid");
 
-        // JSON 那段保持不动
         String rawJson = intent.getStringExtra(PushNotifyTool.EXTRA_MESSAGE_JSON);
         if (rawJson != null && !rawJson.isEmpty()) {
-            String escaped = rawJson
-                    .replace("\\", "\\\\")
-                    .replace("'", "\\'")
-                    .replace("\n", "\\n")
-                    .replace("\r", "");
-            String js = "(function(){try{window.dispatchEvent(new CustomEvent('nativePush',{detail:JSON.parse('"
-                    + escaped + "')}));}catch(e){}})();";
+            String escaped = rawJson.replace("\\", "\\\\").replace("'", "\\'")
+                    .replace("\n", "\\n").replace("\r", "");
+            String js = "(function(){try{window.dispatchEvent(new CustomEvent('nativePush'," +
+                    "{detail:JSON.parse('" + escaped + "')}));}catch(e){}})();";
             webView.post(() -> webView.evaluateJavascript(js, null));
         }
-
         return pendingUid != null;
     }
 
-    /**
-     * 使用 WindowInsets 监听键盘（IME）高度变化。
-     * <p>
-     * 优点：
-     * - 获取的是“真实键盘高度”
-     * - 不包含导航栏
-     * - 不会产生底部白条
-     * - Android 11+ 官方推荐方式
-     */
     private void setupKeyboardInsetListener() {
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(
                 findViewById(android.R.id.content),
                 (view, insets) -> {
-
                     androidx.core.graphics.Insets imeInsets =
                             insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime());
-
-                    boolean isKeyboardVisible =
-                            insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime());
-
-                    if (isKeyboardVisible) {
-                        applyKeyboardInset(imeInsets.bottom);
-                    } else {
-                        applyKeyboardInset(0);
-                    }
-
+                    boolean visible = insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime());
+                    applyKeyboardInset(visible ? imeInsets.bottom : 0);
                     return insets;
                 });
     }
 
-    /**
-     * 根据键盘高度调整 WebView 底部间距。
-     */
     private void applyKeyboardInset(int keyboardHeight) {
         androidx.constraintlayout.widget.ConstraintLayout.LayoutParams params =
                 (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) webView.getLayoutParams();
-
         if (params.bottomMargin != keyboardHeight) {
             params.bottomMargin = keyboardHeight;
             webView.setLayoutParams(params);
-        }
-    }
-
-    public static final class WebAppBridge {
-        private final android.content.Context appContext;
-
-        WebAppBridge(android.content.Context appContext) {
-            this.appContext = appContext.getApplicationContext();
-        }
-
-        @JavascriptInterface
-        public void notify(String messageJson) {
-            Log.d("WebViewJSInterface", "收到消息JSON: " + messageJson); // 添加日志
-            PushNotifyTool.ParsedMessage parsed = PushNotifyTool.ParsedMessage.fromJsonSafe(messageJson);
-            if (parsed == null) return;
-            // 看看 command 是几
-            if (parsed.getCommand() == 5) {// 代表是回传 token，在这里把 token 交给前台服务
-                String token = parsed.getBody();
-                if (token != null && !token.isEmpty()) {
-                    // 开始连接
-                    Intent intent = new Intent(appContext, KeepAliveForegroundService.class);
-                    intent.putExtra(KeepAliveForegroundService.EXTRA_WS_TOKEN, token);
-                    intent.putExtra(KeepAliveForegroundService.EXTRA_NOTIFICATION_TEXT, "连接成功！");
-                    Log.d("WebViewJSInterface", "userId=" + parsed.getRecId());
-                    intent.putExtra("userId", parsed.getRecId());
-                    appContext.startForegroundService(intent);
-                }
-            } else {
-                // 代表是其它的 直接走这个
-                PushNotifyTool.notifyFromWebSocketJson(appContext, parsed);
-            }
         }
     }
 }
