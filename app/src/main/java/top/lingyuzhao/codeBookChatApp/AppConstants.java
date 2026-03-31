@@ -9,10 +9,10 @@ public final class AppConstants {
      * 根域名（无协议），例如：chat.lingyuzhao.top
      */
     public static final String
-//            HOST = "192.168.1.126:8080";
+//            HOST = "192.168.0.9:8080";
             HOST = "chat.lingyuzhao.top";
     /**
-     * 根网址（HTTPS），例如：https://chat.lingyuzhao.top
+     * 根网址（HTTPS），例如：http://chat.lingyuzhao.top
      */
     public static final String BASE_URL = "https://" + HOST;
     /**

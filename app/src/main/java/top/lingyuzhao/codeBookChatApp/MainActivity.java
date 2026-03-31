@@ -329,8 +329,8 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
                 // ✅ 核心修复：将定位结果回传给 Service
                 if (isBound && boundService != null) {
                     boundService.onLocationResult(lat, lng, raw);
-                    // 设置到雷达 TODO 用户对象需要
-                    WebViewJsInjector.inject(webView, "radar.setSelf(selfUser, " + lng + ", " + lat + ", " + System.currentTimeMillis() + ");");
+                    // 使用注入设置到雷达 setSelfToRadar 会自动的计算客户端ID 和 时间等信息的
+                    WebViewJsInjector.inject(webView, "setSelfToRadar(" + lng + ", " + lat + ");");
                 } else {
                     Log.w(TAG, "定位成功但 Service 未绑定，无法回传");
                 }
@@ -401,6 +401,11 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
     }
 
     private void setupWebBridge(WebView webView) {
+        // WebAppBridge 已拆分为独立类
+        webView.addJavascriptInterface(new WebAppBridge(getApplicationContext()), "CodeBookApp");
+    }
+
+    private void setupWebBridgeRadarCompassProJs(WebView webView) {
         // WebAppBridge 已拆分为独立类
         webView.addJavascriptInterface(new WebAppBridge(getApplicationContext()), "CodeBookApp");
     }

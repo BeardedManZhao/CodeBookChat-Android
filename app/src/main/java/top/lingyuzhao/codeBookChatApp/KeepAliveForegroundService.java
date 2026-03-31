@@ -81,6 +81,7 @@ public class KeepAliveForegroundService extends Service {
     //  字段
     // ------------------------------------------------------------------ //
     private String wsId = TAG;
+    private final String thisHash = String.valueOf(this.hashCode());
     private HandlerThread handlerThread;
     private Handler wsHandler;
     private PowerManager.WakeLock wakeLock;
@@ -292,7 +293,7 @@ public class KeepAliveForegroundService extends Service {
         json.put("command", 11);
         json.put("lat", latitude);
         json.put("lng", longitude);
-        json.put("sessionId", getSessionId());
+        json.put("clientId", thisHash);
         webSocketClient.send(json.toString());
     }
 
