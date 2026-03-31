@@ -287,6 +287,7 @@ public class KeepAliveForegroundService extends Service {
             return;
         }
 
+        // 广播
         final com.alibaba.fastjson2.JSONObject json = new com.alibaba.fastjson2.JSONObject();
         json.put("command", 11);
         json.put("lat", latitude);

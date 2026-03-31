@@ -43,6 +43,7 @@ import java.util.concurrent.TimeUnit;
 
 import top.lingyuzhao.codeBookChatApp.push.PushNotifyTool;
 import top.lingyuzhao.codeBookChatApp.utils.SmartLocationHelper;
+import top.lingyuzhao.codeBookChatApp.utils.WebViewJsInjector;
 
 public class MainActivity extends AppCompatActivity implements LocationRequestCallback {
 
@@ -328,6 +329,8 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
                 // ✅ 核心修复：将定位结果回传给 Service
                 if (isBound && boundService != null) {
                     boundService.onLocationResult(lat, lng, raw);
+                    // 设置到雷达 TODO 用户对象需要
+                    WebViewJsInjector.inject(webView, "radar.setSelf(selfUser, " + lng + ", " + lat + ", " + System.currentTimeMillis() + ");");
                 } else {
                     Log.w(TAG, "定位成功但 Service 未绑定，无法回传");
                 }
