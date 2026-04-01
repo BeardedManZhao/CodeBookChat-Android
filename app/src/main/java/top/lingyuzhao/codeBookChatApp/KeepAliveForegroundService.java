@@ -134,7 +134,7 @@ public class KeepAliveForegroundService extends Service {
     public void requestLocationFromActivity(boolean once) {
         LocationRequestCallback callback = callbackRef != null ? callbackRef.get() : null;
         if (callback != null) {
-            callback.onLocationRequested(once);
+            callback.onLocationRequested(once, !once); // 如果 不是一次性的 就需要自动请求权限
         } else {
             Log.w(TAG, "requestLocationFromActivity：回调已释放，无法触发定位");
         }

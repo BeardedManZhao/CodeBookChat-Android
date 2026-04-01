@@ -127,21 +127,21 @@ public class WsUtils {
                     noReadCount.set(0);
                 }
             }
-            case 10 -> {
-                final boolean once = Boolean.parseBoolean(msg.getBody());
-                Log.i(id, "收到GPS的定位请求，客户端应开始处理！定位类型：" + (once ? "一次性定位" : "持续定位"));
-                // 调用定位器 让 MainActivity 定位
-                service.requestLocationFromActivity(once);
-            }
-            case 13 -> {
-                // 调用终止定位器的逻辑 这个是广播的 所以需要校验下id
-                if (service.getSessionId().equals(msg.getSessionId())) {
-                    Log.i(id, "收到GPS的定位终止，客户端应开始处理！");
-                    service.closeLocationFromActivity();
-                } else {
-                    Log.i(id, "收到GPS的定位终止，但是这个终止不是发给这个客户端的，只是因为广播所以收到了");
-                }
-            }
+//            case 10 -> {
+//                final boolean once = Boolean.parseBoolean(msg.getBody());
+//                Log.i(id, "收到GPS的定位请求，客户端应开始处理！定位类型：" + (once ? "一次性定位" : "持续定位"));
+//                // 调用定位器 让 MainActivity 定位
+//                service.requestLocationFromActivity(once);
+//            }
+//            case 13 -> {
+//                // 调用终止定位器的逻辑 这个是广播的 所以需要校验下id
+//                if (service.getSessionId().equals(msg.getSessionId())) {
+//                    Log.i(id, "收到GPS的定位终止，客户端应开始处理！");
+//                    service.closeLocationFromActivity();
+//                } else {
+//                    Log.i(id, "收到GPS的定位终止，但是这个终止不是发给这个客户端的，只是因为广播所以收到了");
+//                }
+//            }
         }
     }
 

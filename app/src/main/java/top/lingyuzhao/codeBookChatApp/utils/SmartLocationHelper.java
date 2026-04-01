@@ -180,6 +180,18 @@ public class SmartLocationHelper {
     }
 
     /**
+     * 检查定位权限与 GPS 开关状态。
+     *
+     * <p>当没有权限时，不会自动请求权限；当 GPS 未开启时，不会跳转到系统定位设置页。</p>
+     *
+     * @param activity 当前 Activity
+     * @return true 表示权限和 GPS 状态都满足，false 表示还需要用户处理
+     */
+    public boolean checkNoRequest(Activity activity) {
+        return !notHasPermission() && isGpsOpen();
+    }
+
+    /**
      * 处理权限申请结果。
      *
      * @param requestCode  请求码

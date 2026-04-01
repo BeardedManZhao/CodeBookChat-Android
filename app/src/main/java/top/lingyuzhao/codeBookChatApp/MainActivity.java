@@ -33,6 +33,10 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.work.Constraints;
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.NetworkType;
@@ -255,6 +259,20 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
         settings.setDatabaseEnabled(true);
         settings.setGeolocationEnabled(true);                               // 如果需要定位
 
+        // 处理非全面屏和刘海等问题
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        ViewCompat.setOnApplyWindowInsetsListener(webView, (v, insets) -> {
+            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            v.setPadding(
+                    bars.left,
+                    bars.top,
+                    bars.right,
+                    bars.bottom
+            );
+            return insets;
+        });
+
+        // 开始加载
         final Intent intent = getIntent();
         final Uri uri = intent.getData();
         if (handleNotificationOpenIntent(intent) && uri != null) {
@@ -303,15 +321,22 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
      * 定位成功后通过 Binder 引用调用 Service.onLocationResult，由 Service 负责上传。
      */
     @Override
-    public void onLocationRequested(boolean once) {
+    public void onLocationRequested(boolean once, boolean isAutoReq) {
         if (loc.isEnabled() && once && !loc.isOnce()) {
             // 代表不需要操作 因为 单次 多次 都是没什么区别的
             Log.i(TAG, "onLocationRequested 检测到不需要启动，因为目前处于实时检测状态，一次性启动可被实时状态包裹其中，直接跳过");
             return;
         }
-        if (!loc.check(this)) {
-            Log.w(TAG, "onLocationRequested：check 不通过，已跳过");
-            return;
+        if (isAutoReq) {
+            if (!loc.check(this)) {
+                Log.w(TAG, "onLocationRequested：check 不通过，已跳过");
+                return;
+            }
+        } else {
+            if (!loc.checkNoRequest(this)) {
+                Log.w(TAG, "onLocationRequested：checkNoRequest 不通过，已跳过");
+                return;
+            }
         }
 
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -340,7 +365,7 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
             public void onError(boolean once, String msg) {
                 Log.e(TAG, "定位失败: " + msg + "; " + (once ? "已停止定位" : "尝试重新启动！"));
                 if (!once && msg.endsWith("超时")) {
-                    onLocationRequested(false); // 如果是持续定位且是超时的错误就重启，不得被断开
+                    onLocationRequested(false, isAutoReq); // 如果是持续定位且是超时的错误就重启，不得被断开
                 }
             }
         });
@@ -401,11 +426,6 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
     }
 
     private void setupWebBridge(WebView webView) {
-        // WebAppBridge 已拆分为独立类
-        webView.addJavascriptInterface(new WebAppBridge(getApplicationContext()), "CodeBookApp");
-    }
-
-    private void setupWebBridgeRadarCompassProJs(WebView webView) {
         // WebAppBridge 已拆分为独立类
         webView.addJavascriptInterface(new WebAppBridge(getApplicationContext()), "CodeBookApp");
     }
