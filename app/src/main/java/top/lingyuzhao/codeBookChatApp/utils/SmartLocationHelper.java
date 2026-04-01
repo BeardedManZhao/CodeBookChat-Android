@@ -161,14 +161,17 @@ public class SmartLocationHelper {
      * @param activity 当前 Activity
      * @return true 表示权限和 GPS 状态都满足，false 表示还需要用户处理
      */
-    public boolean check(Activity activity) {
+    public boolean checkAutoRequest(Activity activity) {
         if (notHasPermission()) {
             ActivityCompat.requestPermissions(
                     activity,
                     new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
                     REQ_PERMISSION
             );
-            return false;
+            if (notHasPermission()) {
+                // 第二次判断是判断有没有提供权限，如果还是没提供再返回
+                return false;
+            }
         }
 
         if (!isGpsOpen()) {
@@ -177,6 +180,18 @@ public class SmartLocationHelper {
         }
 
         return true;
+    }
+
+    /**
+     * 检查定位权限与 GPS 开关状态。
+     *
+     * <p>当没有权限时，不会自动请求权限；当 GPS 未开启时，不会跳转到系统定位设置页。</p>
+     *
+     * @param activity 当前 Activity
+     * @return true 表示权限和 GPS 状态都满足，false 表示还需要用户处理
+     */
+    public boolean checkNoRequest(Activity activity) {
+        return !notHasPermission() && isGpsOpen();
     }
 
     /**

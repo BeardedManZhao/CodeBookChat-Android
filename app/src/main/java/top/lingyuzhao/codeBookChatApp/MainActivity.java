@@ -33,6 +33,10 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.work.Constraints;
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.NetworkType;
@@ -43,6 +47,7 @@ import java.util.concurrent.TimeUnit;
 
 import top.lingyuzhao.codeBookChatApp.push.PushNotifyTool;
 import top.lingyuzhao.codeBookChatApp.utils.SmartLocationHelper;
+import top.lingyuzhao.codeBookChatApp.utils.WebViewJsInjector;
 
 public class MainActivity extends AppCompatActivity implements LocationRequestCallback {
 
@@ -242,7 +247,7 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
         settings.setAllowContentAccess(true);
 
         // 新增/优化性能设置
-        settings.setCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);         // 优先使用缓存，减少网络等待
+        // settings.setCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);         // 优先使用缓存，减少网络等待
         settings.setLoadsImagesAutomatically(true);
         settings.setBlockNetworkImage(false);                               // 允许图片加载（可根据需要改）
 
@@ -254,6 +259,20 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
         settings.setDatabaseEnabled(true);
         settings.setGeolocationEnabled(true);                               // 如果需要定位
 
+        // 处理非全面屏和刘海等问题
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        ViewCompat.setOnApplyWindowInsetsListener(webView, (v, insets) -> {
+            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            v.setPadding(
+                    bars.left,
+                    bars.top,
+                    bars.right,
+                    bars.bottom
+            );
+            return insets;
+        });
+
+        // 开始加载
         final Intent intent = getIntent();
         final Uri uri = intent.getData();
         if (handleNotificationOpenIntent(intent) && uri != null) {
@@ -302,13 +321,23 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
      * 定位成功后通过 Binder 引用调用 Service.onLocationResult，由 Service 负责上传。
      */
     @Override
-    public void onLocationRequested(boolean once) {
-        if (loc.isEnabled() && !loc.isOnce()) {
+    public void onLocationRequested(boolean once, boolean isAutoReq) {
+        if (loc.isEnabled() && once && !loc.isOnce()) {
             // 代表不需要操作 因为 单次 多次 都是没什么区别的
+            Log.i(TAG, "onLocationRequested 检测到不需要启动，因为目前处于实时检测状态，一次性启动可被实时状态包裹其中，直接跳过");
             return;
         }
-        loc.setEnabled(true);
-        if (!loc.check(this)) return;
+        if (isAutoReq) {
+            if (!loc.checkAutoRequest(this)) {
+                Log.w(TAG, "onLocationRequested：checkAutoRequest 不通过，已跳过");
+                return;
+            }
+        } else {
+            if (!loc.checkNoRequest(this)) {
+                Log.w(TAG, "onLocationRequested：checkNoRequest 不通过，已跳过");
+                return;
+            }
+        }
 
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED
@@ -317,14 +346,16 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
             Log.w(TAG, "onLocationRequested：缺少定位权限，已跳过");
             return;
         }
-
+        loc.setEnabled(true);
         loc.start(once, new SmartLocationHelper.OnLocationCallback() {
             @Override
             public void onLocation(double lat, double lng, Location raw) {
-                Log.d(TAG, "定位成功: " + lat + ", " + lng);
+                Log.d(TAG, "定位成功!");
                 // ✅ 核心修复：将定位结果回传给 Service
                 if (isBound && boundService != null) {
                     boundService.onLocationResult(lat, lng, raw);
+                    // 使用注入设置到雷达 setSelfToRadar 会自动的计算客户端ID 和 时间等信息的
+                    WebViewJsInjector.inject(webView, "setSelfToRadar(" + lng + ", " + lat + ");");
                 } else {
                     Log.w(TAG, "定位成功但 Service 未绑定，无法回传");
                 }
@@ -334,7 +365,7 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
             public void onError(boolean once, String msg) {
                 Log.e(TAG, "定位失败: " + msg + "; " + (once ? "已停止定位" : "尝试重新启动！"));
                 if (!once && msg.endsWith("超时")) {
-                    onLocationRequested(false); // 如果是持续定位且是超时的错误就重启，不得被断开
+                    onLocationRequested(false, isAutoReq); // 如果是持续定位且是超时的错误就重启，不得被断开
                 }
             }
         });

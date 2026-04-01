@@ -72,11 +72,11 @@ public class KeepAliveForegroundService extends Service {
     //  Binder（供 Activity 通过 bindService 拿到 Service 实例）
     // ------------------------------------------------------------------ //
     private final IBinder binder = new LocalBinder();
+    private final String thisHash = String.valueOf(this.hashCode());
     /**
      * 对外暴露，供 WsUtils 回调写入
      */
     public WebSocket webSocketClient = null;
-
     // ------------------------------------------------------------------ //
     //  字段
     // ------------------------------------------------------------------ //
@@ -133,7 +133,7 @@ public class KeepAliveForegroundService extends Service {
     public void requestLocationFromActivity(boolean once) {
         LocationRequestCallback callback = callbackRef != null ? callbackRef.get() : null;
         if (callback != null) {
-            callback.onLocationRequested(once);
+            callback.onLocationRequested(once, !once); // 如果 不是一次性的 就需要自动请求权限
         } else {
             Log.w(TAG, "requestLocationFromActivity：回调已释放，无法触发定位");
         }
@@ -230,6 +230,7 @@ public class KeepAliveForegroundService extends Service {
                 case 13 -> {
                     // STOP_GPS_ONCE 检测
                     if (intent.getBooleanExtra(STOP_GPS_ONCE, false)) {
+                        Log.i(TAG, "收到关闭 GPS 命令");
                         // 代表要关闭GPS
                         this.closeLocationFromActivity();
                     }
@@ -279,18 +280,19 @@ public class KeepAliveForegroundService extends Service {
      * @param rawLocation 原始 Location 对象（可为 null）
      */
     public void onLocationResult(double latitude, double longitude, Location rawLocation) {
-        Log.d(TAG, "收到位置回传: " + latitude + ", " + longitude);
+        Log.d(TAG, "收到位置回传");
 
         if (webSocketClient == null) {
             Log.w(TAG, "onLocationResult：WebSocket 尚未连接，丢弃本次位置");
             return;
         }
 
+        // 广播
         final com.alibaba.fastjson2.JSONObject json = new com.alibaba.fastjson2.JSONObject();
         json.put("command", 11);
         json.put("lat", latitude);
         json.put("lng", longitude);
-        json.put("sessionId", getSessionId());
+        json.put("clientId", thisHash);
         webSocketClient.send(json.toString());
     }
 
@@ -414,6 +416,14 @@ public class KeepAliveForegroundService extends Service {
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    private void acquireWakeLock() {
+        try {
+            if (!wakeLock.isHeld()) wakeLock.acquire(WAKELOCK_TIMEOUT);
+        } catch (Throwable t) {
+            Log.w(TAG, "WakeLock acquire 失败", t);
+        }
     }    private final Runnable heartbeatTask = () -> {
         if (isDestroyed) return;
         if (webSocketClient != null && webSocketClient.send("0")) {
@@ -430,24 +440,12 @@ public class KeepAliveForegroundService extends Service {
     //  网络变化监听
     // ------------------------------------------------------------------ //
 
-    private void acquireWakeLock() {
-        try {
-            if (!wakeLock.isHeld()) wakeLock.acquire(WAKELOCK_TIMEOUT);
-        } catch (Throwable t) {
-            Log.w(TAG, "WakeLock acquire 失败", t);
-        }
-    }
-
     private void releaseWakeLock() {
         try {
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         } catch (Throwable ignored) {
         }
     }
-
-    // ------------------------------------------------------------------ //
-    //  WakeLock
-    // ------------------------------------------------------------------ //
 
     private void closeWebSocket(String reason) {
         if (webSocketClient != null) {
@@ -459,6 +457,10 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
+    // ------------------------------------------------------------------ //
+    //  WakeLock
+    // ------------------------------------------------------------------ //
+
     private void startForegroundCompat() {
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, buildNotification().build(),
@@ -467,10 +469,6 @@ public class KeepAliveForegroundService extends Service {
             startForeground(NOTIFICATION_ID, buildNotification().build());
         }
     }
-
-    // ------------------------------------------------------------------ //
-    //  WebSocket 工具
-    // ------------------------------------------------------------------ //
 
     private void ensureChannel() {
         NotificationManager nm = getSystemService(NotificationManager.class);
@@ -485,7 +483,7 @@ public class KeepAliveForegroundService extends Service {
     }
 
     // ------------------------------------------------------------------ //
-    //  通知
+    //  WebSocket 工具
     // ------------------------------------------------------------------ //
 
     private NotificationCompat.Builder buildNotification() {
@@ -502,6 +500,10 @@ public class KeepAliveForegroundService extends Service {
                 .setPriority(NotificationCompat.PRIORITY_LOW);
     }
 
+    // ------------------------------------------------------------------ //
+    //  通知
+    // ------------------------------------------------------------------ //
+
     private void updateNotificationText(String text) {
         currentNotificationText = text;
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
@@ -516,10 +518,6 @@ public class KeepAliveForegroundService extends Service {
         this.wsId = wsId;
     }
 
-    // ------------------------------------------------------------------ //
-    //  getter / setter
-    // ------------------------------------------------------------------ //
-
     /**
      * 绑定凭证。Activity 通过 {@link ServiceConnection#onServiceConnected} 拿到此对象，
      * 再调用 {@link #getService()} 即可直接操作 Service。
@@ -529,6 +527,12 @@ public class KeepAliveForegroundService extends Service {
             return KeepAliveForegroundService.this;
         }
     }
+
+    // ------------------------------------------------------------------ //
+    //  getter / setter
+    // ------------------------------------------------------------------ //
+
+
 
 
 }
