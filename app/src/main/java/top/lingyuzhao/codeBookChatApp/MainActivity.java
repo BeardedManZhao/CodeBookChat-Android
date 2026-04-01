@@ -328,8 +328,8 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
             return;
         }
         if (isAutoReq) {
-            if (!loc.check(this)) {
-                Log.w(TAG, "onLocationRequested：check 不通过，已跳过");
+            if (!loc.checkAutoRequest(this)) {
+                Log.w(TAG, "onLocationRequested：checkAutoRequest 不通过，已跳过");
                 return;
             }
         } else {

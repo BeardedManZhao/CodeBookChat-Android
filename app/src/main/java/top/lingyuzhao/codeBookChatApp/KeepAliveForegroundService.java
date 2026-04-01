@@ -72,16 +72,15 @@ public class KeepAliveForegroundService extends Service {
     //  Binder（供 Activity 通过 bindService 拿到 Service 实例）
     // ------------------------------------------------------------------ //
     private final IBinder binder = new LocalBinder();
+    private final String thisHash = String.valueOf(this.hashCode());
     /**
      * 对外暴露，供 WsUtils 回调写入
      */
     public WebSocket webSocketClient = null;
-
     // ------------------------------------------------------------------ //
     //  字段
     // ------------------------------------------------------------------ //
     private String wsId = TAG;
-    private final String thisHash = String.valueOf(this.hashCode());
     private HandlerThread handlerThread;
     private Handler wsHandler;
     private PowerManager.WakeLock wakeLock;
@@ -417,6 +416,14 @@ public class KeepAliveForegroundService extends Service {
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    private void acquireWakeLock() {
+        try {
+            if (!wakeLock.isHeld()) wakeLock.acquire(WAKELOCK_TIMEOUT);
+        } catch (Throwable t) {
+            Log.w(TAG, "WakeLock acquire 失败", t);
+        }
     }    private final Runnable heartbeatTask = () -> {
         if (isDestroyed) return;
         if (webSocketClient != null && webSocketClient.send("0")) {
@@ -433,24 +440,12 @@ public class KeepAliveForegroundService extends Service {
     //  网络变化监听
     // ------------------------------------------------------------------ //
 
-    private void acquireWakeLock() {
-        try {
-            if (!wakeLock.isHeld()) wakeLock.acquire(WAKELOCK_TIMEOUT);
-        } catch (Throwable t) {
-            Log.w(TAG, "WakeLock acquire 失败", t);
-        }
-    }
-
     private void releaseWakeLock() {
         try {
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         } catch (Throwable ignored) {
         }
     }
-
-    // ------------------------------------------------------------------ //
-    //  WakeLock
-    // ------------------------------------------------------------------ //
 
     private void closeWebSocket(String reason) {
         if (webSocketClient != null) {
@@ -462,6 +457,10 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
+    // ------------------------------------------------------------------ //
+    //  WakeLock
+    // ------------------------------------------------------------------ //
+
     private void startForegroundCompat() {
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, buildNotification().build(),
@@ -470,10 +469,6 @@ public class KeepAliveForegroundService extends Service {
             startForeground(NOTIFICATION_ID, buildNotification().build());
         }
     }
-
-    // ------------------------------------------------------------------ //
-    //  WebSocket 工具
-    // ------------------------------------------------------------------ //
 
     private void ensureChannel() {
         NotificationManager nm = getSystemService(NotificationManager.class);
@@ -488,7 +483,7 @@ public class KeepAliveForegroundService extends Service {
     }
 
     // ------------------------------------------------------------------ //
-    //  通知
+    //  WebSocket 工具
     // ------------------------------------------------------------------ //
 
     private NotificationCompat.Builder buildNotification() {
@@ -505,6 +500,10 @@ public class KeepAliveForegroundService extends Service {
                 .setPriority(NotificationCompat.PRIORITY_LOW);
     }
 
+    // ------------------------------------------------------------------ //
+    //  通知
+    // ------------------------------------------------------------------ //
+
     private void updateNotificationText(String text) {
         currentNotificationText = text;
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
@@ -519,10 +518,6 @@ public class KeepAliveForegroundService extends Service {
         this.wsId = wsId;
     }
 
-    // ------------------------------------------------------------------ //
-    //  getter / setter
-    // ------------------------------------------------------------------ //
-
     /**
      * 绑定凭证。Activity 通过 {@link ServiceConnection#onServiceConnected} 拿到此对象，
      * 再调用 {@link #getService()} 即可直接操作 Service。
@@ -532,6 +527,12 @@ public class KeepAliveForegroundService extends Service {
             return KeepAliveForegroundService.this;
         }
     }
+
+    // ------------------------------------------------------------------ //
+    //  getter / setter
+    // ------------------------------------------------------------------ //
+
+
 
 
 }
