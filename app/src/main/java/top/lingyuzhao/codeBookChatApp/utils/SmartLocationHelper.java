@@ -16,6 +16,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.RequiresPermission;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.util.Consumer;
 
 /**
  * 一个轻量的智能定位工具。
@@ -159,27 +160,29 @@ public class SmartLocationHelper {
      * <p>当没有权限时，会自动请求权限；当 GPS 未开启时，会跳转到系统定位设置页。</p>
      *
      * @param activity 当前 Activity
-     * @return true 表示权限和 GPS 状态都满足，false 表示还需要用户处理
+     * @param callback 没有权限同时尝试申请的时候会进入到这里，同时传递 false 和 true 如果是 true 就代表已经就绪了，如果是 false 就代表还在等待用户给予权限。
      */
-    public boolean checkAutoRequest(Activity activity) {
+    public void checkAutoRequest(Activity activity, Consumer<Boolean> callback) {
+        // 1. 没权限 → 请求权限
         if (notHasPermission()) {
             ActivityCompat.requestPermissions(
                     activity,
                     new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
                     REQ_PERMISSION
             );
-            if (notHasPermission()) {
-                // 第二次判断是判断有没有提供权限，如果还是没提供再返回
-                return false;
-            }
+            callback.accept(false);
+            return;
         }
 
+        // 2. GPS没开 → 跳设置
         if (!isGpsOpen()) {
             activity.startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
-            return false;
+            callback.accept(false);
+            return;
         }
 
-        return true;
+        // 3. 全部OK
+        callback.accept(true);
     }
 
     /**

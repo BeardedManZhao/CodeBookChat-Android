@@ -424,6 +424,13 @@ public class KeepAliveForegroundService extends Service {
         } catch (Throwable t) {
             Log.w(TAG, "WakeLock acquire 失败", t);
         }
+    }
+
+    private void releaseWakeLock() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        } catch (Throwable ignored) {
+        }
     }    private final Runnable heartbeatTask = () -> {
         if (isDestroyed) return;
         if (webSocketClient != null && webSocketClient.send("0")) {
@@ -440,13 +447,6 @@ public class KeepAliveForegroundService extends Service {
     //  网络变化监听
     // ------------------------------------------------------------------ //
 
-    private void releaseWakeLock() {
-        try {
-            if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
-        } catch (Throwable ignored) {
-        }
-    }
-
     private void closeWebSocket(String reason) {
         if (webSocketClient != null) {
             try {
@@ -457,10 +457,6 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
-    // ------------------------------------------------------------------ //
-    //  WakeLock
-    // ------------------------------------------------------------------ //
-
     private void startForegroundCompat() {
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, buildNotification().build(),
@@ -469,6 +465,10 @@ public class KeepAliveForegroundService extends Service {
             startForeground(NOTIFICATION_ID, buildNotification().build());
         }
     }
+
+    // ------------------------------------------------------------------ //
+    //  WakeLock
+    // ------------------------------------------------------------------ //
 
     private void ensureChannel() {
         NotificationManager nm = getSystemService(NotificationManager.class);
@@ -481,10 +481,6 @@ public class KeepAliveForegroundService extends Service {
         ch.setShowBadge(false);
         nm.createNotificationChannel(ch);
     }
-
-    // ------------------------------------------------------------------ //
-    //  WebSocket 工具
-    // ------------------------------------------------------------------ //
 
     private NotificationCompat.Builder buildNotification() {
         PendingIntent pending = PendingIntent.getActivity(this, 0,
@@ -501,7 +497,7 @@ public class KeepAliveForegroundService extends Service {
     }
 
     // ------------------------------------------------------------------ //
-    //  通知
+    //  WebSocket 工具
     // ------------------------------------------------------------------ //
 
     private void updateNotificationText(String text) {
@@ -509,6 +505,10 @@ public class KeepAliveForegroundService extends Service {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (nm != null) nm.notify(NOTIFICATION_ID, buildNotification().build());
     }
+
+    // ------------------------------------------------------------------ //
+    //  通知
+    // ------------------------------------------------------------------ //
 
     public String getSessionId() {
         return wsId;
@@ -528,11 +528,11 @@ public class KeepAliveForegroundService extends Service {
         }
     }
 
+
+
     // ------------------------------------------------------------------ //
     //  getter / setter
     // ------------------------------------------------------------------ //
-
-
 
 
 }

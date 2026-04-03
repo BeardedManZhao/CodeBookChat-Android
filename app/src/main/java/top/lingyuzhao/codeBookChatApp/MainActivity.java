@@ -316,29 +316,7 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
     //  LocationRequestCallback 实现（核心修复）
     // ------------------------------------------------------------------ //
 
-    /**
-     * Service 需要定位时回调此方法。
-     * 定位成功后通过 Binder 引用调用 Service.onLocationResult，由 Service 负责上传。
-     */
-    @Override
-    public void onLocationRequested(boolean once, boolean isAutoReq) {
-        if (loc.isEnabled() && once && !loc.isOnce()) {
-            // 代表不需要操作 因为 单次 多次 都是没什么区别的
-            Log.i(TAG, "onLocationRequested 检测到不需要启动，因为目前处于实时检测状态，一次性启动可被实时状态包裹其中，直接跳过");
-            return;
-        }
-        if (isAutoReq) {
-            if (!loc.checkAutoRequest(this)) {
-                Log.w(TAG, "onLocationRequested：checkAutoRequest 不通过，已跳过");
-                return;
-            }
-        } else {
-            if (!loc.checkNoRequest(this)) {
-                Log.w(TAG, "onLocationRequested：checkNoRequest 不通过，已跳过");
-                return;
-            }
-        }
-
+    private void locationRequestedStart(boolean once) {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED
                 || ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
@@ -365,10 +343,47 @@ public class MainActivity extends AppCompatActivity implements LocationRequestCa
             public void onError(boolean once, String msg) {
                 Log.e(TAG, "定位失败: " + msg + "; " + (once ? "已停止定位" : "尝试重新启动！"));
                 if (!once && msg.endsWith("超时")) {
-                    onLocationRequested(false, isAutoReq); // 如果是持续定位且是超时的错误就重启，不得被断开
+                    WebViewJsInjector.inject(webView, "radar.showMessage('重连中')");
+                    locationRequestedStart(false); // 如果是持续定位且是超时的错误就重启，不得被断开
+                } else {
+                    // 代表是除了超时以外的情况 直接关闭
+                    WebViewJsInjector.inject(webView, "alert('" + msg + "'); radar.hide();");
                 }
             }
         });
+    }
+
+    /**
+     * Service 需要定位时回调此方法。
+     * 定位成功后通过 Binder 引用调用 Service.onLocationResult，由 Service 负责上传。
+     */
+    @Override
+    public void onLocationRequested(final boolean once, final boolean isAutoReq) {
+        if (loc.isEnabled() && once && !loc.isOnce()) {
+            // 代表不需要操作 因为 单次 多次 都是没什么区别的
+            Log.i(TAG, "onLocationRequested 检测到不需要启动，因为目前处于实时检测状态，一次性启动可被实时状态包裹其中，直接跳过");
+            return;
+        }
+        if (isAutoReq) {
+            // 这里代表是没有权限就自动申请权限
+            loc.checkAutoRequest(this, aBoolean -> {
+                if (aBoolean) {
+                    // 如果为 true 代表的就是权限给予成功了
+                    locationRequestedStart(once); // 这里会设置数据到雷达 而 打开雷达的逻辑在js
+                } else {
+                    Toast.makeText(MainActivity.this, "未授予定位权限无法使用雷达", Toast.LENGTH_SHORT).show();
+                    // 关闭雷达
+                    WebViewJsInjector.inject(webView, "alert('未授予定位权限无法使用雷达，请重新打开雷达'); radar.hide();");
+                }
+            });
+        } else {
+            if (!loc.checkNoRequest(this)) {
+                Log.w(TAG, "onLocationRequested：checkNoRequest 不通过，已跳过");
+                return;
+            }
+            // 这里代表的是只检查 不需要担心自动申请权限问题
+            locationRequestedStart(once);
+        }
     }
 
     @Override

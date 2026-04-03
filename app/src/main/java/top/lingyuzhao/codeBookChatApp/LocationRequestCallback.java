@@ -11,7 +11,7 @@ public interface LocationRequestCallback {
     /**
      * Service 需要获取位置时回调此方法，Activity 在此方法中启动定位
      *
-     * @param once 是否只定位一次
+     * @param once      是否只定位一次
      * @param isAutoReq 是否在没有权限的时候启动请求权限
      */
     void onLocationRequested(boolean once, boolean isAutoReq);
